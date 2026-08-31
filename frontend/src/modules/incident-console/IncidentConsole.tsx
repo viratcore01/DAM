@@ -59,29 +59,21 @@ export default function IncidentConsole() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const iframeKeyRef = useRef(0);
 
-  // Fly to dam by sending postMessage + reloading iframe with coords as fallback
+  // Fly to dam via GeoLibre embed API postMessage
   const flyToDam = useCallback((dam: DamPoint) => {
-    // Method 1: postMessage to GeoLibre embed API (v1 protocol)
-    if (iframeRef.current?.contentWindow) {
-      try {
-        iframeRef.current.contentWindow.postMessage(
-          {
-            v: 1,
-            type: 'setView',
-            payload: { center: [dam.lon, dam.lat], zoom: 12 },
-            requestId: `dam-${dam.id}-${Date.now()}`,
-          },
-          GEOLIBRE_URL,
-        );
-      } catch {}
-    }
-
-    // Method 2: Reload iframe with coordinates as URL hash fallback
-    // This always works regardless of embed API configuration
-    const newUrl = `${GEOLIBRE_URL}/?center=${dam.lon},${dam.lat}&zoom=12`;
-    if (iframeRef.current) {
-      iframeRef.current.src = newUrl;
-      setMapLoading(true);
+    if (!iframeRef.current?.contentWindow) return;
+    try {
+      iframeRef.current.contentWindow.postMessage(
+        {
+          v: 1,
+          type: 'setView',
+          payload: { center: [dam.lon, dam.lat], zoom: 12 },
+          requestId: `dam-${dam.id}-${Date.now()}`,
+        },
+        GEOLIBRE_URL,
+      );
+    } catch (err) {
+      console.warn('flyTo postMessage failed:', err);
     }
   }, []);
 
