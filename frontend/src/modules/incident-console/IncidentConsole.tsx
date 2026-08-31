@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Clock, Play, Pause, RotateCcw, X, Users, Droplets, AlertTriangle, MapPin } from 'lucide-react';
+import { X, Users, Droplets, AlertTriangle } from 'lucide-react';
 import { INDIA_DAMS, DamPoint } from '../../data/india-dams';
 
 const GEOLIBRE_URL = 'http://localhost:5175';
@@ -56,7 +56,6 @@ function formatType(type: string) {
 
 export default function IncidentConsole() {
   const [selectedDam, setSelectedDam] = useState<DamPoint | null>(null);
-  const [isConnected, setIsConnected] = useState(false);
   const [mapLoading, setMapLoading] = useState(true);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const embedClientRef = useRef<any>(null);
@@ -81,14 +80,8 @@ export default function IncidentConsole() {
         }
 
         embedClientRef.current = client;
-        setIsConnected(true);
-
-        // Listen for view changes
-        client.on('viewChanged', () => {});
       } catch (err) {
         console.warn('GeoLibre embed connect failed, iframe will work without API control:', err);
-        // Still works as a plain iframe
-        setIsConnected(false);
       }
     }
 
@@ -128,26 +121,6 @@ export default function IncidentConsole() {
 
   return (
     <div className="flex flex-col h-full" style={{ minHeight: 'calc(100vh - 3.5rem)' }}>
-      {/* Header */}
-      <div className="shrink-0 flex items-center justify-between pb-3">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">Incident Console</h1>
-          <p className="text-slate-500 mt-1">GeoLibre-powered GIS • Click any dam to view safety data</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
-            isConnected ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'
-          }`}>
-            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-500' : 'bg-yellow-400 animate-pulse'}`} />
-            {isConnected ? 'GeoLibre Connected' : 'Connecting...'}
-          </div>
-          <div className="bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-semibold">
-            <MapPin className="w-3.5 h-3.5 inline mr-1" />
-            {INDIA_DAMS.length} Dams Indexed
-          </div>
-        </div>
-      </div>
-
       {/* Main content: sidebar + GeoLibre iframe + data panel */}
       <div className="flex-1 flex gap-3 min-h-0">
         {/* Dam sidebar */}
