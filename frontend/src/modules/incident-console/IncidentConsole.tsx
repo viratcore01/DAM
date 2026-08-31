@@ -5,12 +5,11 @@
  * Click any dam in the sidebar → fly the GeoLibre map to it + show data panel.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { X, Users, Droplets, AlertTriangle } from 'lucide-react';
 import { INDIA_DAMS, DamPoint } from '../../data/india-dams';
 
 const GEOLIBRE_URL = 'http://localhost:5175';
-const GEOLIBRE_ORIGIN = 'http://localhost:5175';
 
 function classifyHazard(dam: DamPoint) {
   const heightScore = Math.min(dam.height_m / 300, 1);
@@ -58,57 +57,31 @@ export default function IncidentConsole() {
   const [selectedDam, setSelectedDam] = useState<DamPoint | null>(null);
   const [mapLoading, setMapLoading] = useState(true);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const embedClientRef = useRef<any>(null);
+  const iframeKeyRef = useRef(0);
 
-  // Connect to GeoLibre embed API
-  useEffect(() => {
-    let cancelled = false;
-
-    async function connectEmbed() {
+  // Fly to dam by sending postMessage + reloading iframe with coords as fallback
+  const flyToDam = useCallback((dam: DamPoint) => {
+    // Method 1: postMessage to GeoLibre embed API (v1 protocol)
+    if (iframeRef.current?.contentWindow) {
       try {
-        const { connect } = await import('@geolibre/embed');
-        if (cancelled || !iframeRef.current) return;
-
-        const client = await connect(iframeRef.current, {
-          origin: GEOLIBRE_ORIGIN,
-          timeoutMs: 30000,
-        });
-
-        if (cancelled) {
-          client.disconnect();
-          return;
-        }
-
-        embedClientRef.current = client;
-      } catch (err) {
-        console.warn('GeoLibre embed connect failed, iframe will work without API control:', err);
-      }
+        iframeRef.current.contentWindow.postMessage(
+          {
+            v: 1,
+            type: 'setView',
+            payload: { center: [dam.lon, dam.lat], zoom: 12 },
+            requestId: `dam-${dam.id}-${Date.now()}`,
+          },
+          GEOLIBRE_URL,
+        );
+      } catch {}
     }
 
-    // Wait for iframe to load
-    const timer = setTimeout(connectEmbed, 2000);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      if (embedClientRef.current) {
-        embedClientRef.current.disconnect();
-      }
-    };
-  }, []);
-
-  // Fly to dam when selected
-  const flyToDam = useCallback(async (dam: DamPoint) => {
-    if (embedClientRef.current) {
-      try {
-        await embedClientRef.current.setView({
-          center: [dam.lon, dam.lat],
-          zoom: 12,
-          pitch: 45,
-          bearing: 0,
-        });
-      } catch (err) {
-        console.warn('flyTo failed:', err);
-      }
+    // Method 2: Reload iframe with coordinates as URL hash fallback
+    // This always works regardless of embed API configuration
+    const newUrl = `${GEOLIBRE_URL}/?center=${dam.lon},${dam.lat}&zoom=12`;
+    if (iframeRef.current) {
+      iframeRef.current.src = newUrl;
+      setMapLoading(true);
     }
   }, []);
 
@@ -194,7 +167,6 @@ export default function IncidentConsole() {
               <div className="text-center">
                 <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
                 <p className="text-sm font-semibold text-slate-600">Loading GeoLibre...</p>
-                <p className="text-xs text-slate-400 mt-1">Starting at {GEOLIBRE_URL}</p>
               </div>
             </div>
           )}
@@ -271,7 +243,6 @@ export default function IncidentConsole() {
                 </div>
               )}
 
-              {/* Coordinates for GeoLibre */}
               <div className="border-t border-slate-100 pt-3 mt-3">
                 <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2">GeoLibre Actions</p>
                 <button onClick={() => flyToDam(selectedDam)}
