@@ -1,17 +1,16 @@
 /**
  * DamSafe Twin — Incident Console
  *
- * Single unified GeoLibre-powered map.
- * Click any dam dot → fly to it + show data panel with dam details.
- * Time slider for flood simulation.
+ * Embeds the actual GeoLibre GIS platform as the main map.
+ * Click any dam in the sidebar → fly the GeoLibre map to it + show data panel.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Clock, Play, Pause, RotateCcw, X, Users, Droplets, AlertTriangle, MapPin } from 'lucide-react';
-import EnhancedMap from '../../viewers/maplibre-2d-map/EnhancedMap';
-import ErrorBoundary from '../../components/ErrorBoundary';
-import { useImpactData } from './hooks';
 import { INDIA_DAMS, DamPoint } from '../../data/india-dams';
+
+const GEOLIBRE_URL = 'http://localhost:5175';
+const GEOLIBRE_ORIGIN = 'http://localhost:5175';
 
 function classifyHazard(dam: DamPoint) {
   const heightScore = Math.min(dam.height_m / 300, 1);
@@ -56,90 +55,190 @@ function formatType(type: string) {
 }
 
 export default function IncidentConsole() {
-  const [simRunId, setSimRunId] = useState('demo-run-001');
-  const [timeMinutes, setTimeMinutes] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [selectedDam, setSelectedDam] = useState<DamPoint | null>(null);
-  const [cameraTarget, setCameraTarget] = useState<{ lon: number; lat: number; heightM: number } | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [mapLoading, setMapLoading] = useState(true);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const embedClientRef = useRef<any>(null);
 
-  const { data: impactData, loading } = useImpactData(simRunId, timeMinutes);
-
+  // Connect to GeoLibre embed API
   useEffect(() => {
-    if (!isPlaying) return;
-    const interval = setInterval(() => {
-      setTimeMinutes((t) => {
-        if (t >= 120) { setIsPlaying(false); return 120; }
-        return t + 1;
-      });
-    }, 200);
-    return () => clearInterval(interval);
-  }, [isPlaying]);
+    let cancelled = false;
+
+    async function connectEmbed() {
+      try {
+        const { connect } = await import('@geolibre/embed');
+        if (cancelled || !iframeRef.current) return;
+
+        const client = await connect(iframeRef.current, {
+          origin: GEOLIBRE_ORIGIN,
+          timeoutMs: 30000,
+        });
+
+        if (cancelled) {
+          client.disconnect();
+          return;
+        }
+
+        embedClientRef.current = client;
+        setIsConnected(true);
+
+        // Listen for view changes
+        client.on('viewChanged', () => {});
+      } catch (err) {
+        console.warn('GeoLibre embed connect failed, iframe will work without API control:', err);
+        // Still works as a plain iframe
+        setIsConnected(false);
+      }
+    }
+
+    // Wait for iframe to load
+    const timer = setTimeout(connectEmbed, 2000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      if (embedClientRef.current) {
+        embedClientRef.current.disconnect();
+      }
+    };
+  }, []);
+
+  // Fly to dam when selected
+  const flyToDam = useCallback(async (dam: DamPoint) => {
+    if (embedClientRef.current) {
+      try {
+        await embedClientRef.current.setView({
+          center: [dam.lon, dam.lat],
+          zoom: 12,
+          pitch: 45,
+          bearing: 0,
+        });
+      } catch (err) {
+        console.warn('flyTo failed:', err);
+      }
+    }
+  }, []);
 
   const handleDamClick = useCallback((dam: DamPoint) => {
     setSelectedDam(dam);
-    setCameraTarget({ lon: dam.lon, lat: dam.lat, heightM: Math.max(dam.height_m * 12, 5000) });
-  }, []);
+    flyToDam(dam);
+  }, [flyToDam]);
 
   const hazard = selectedDam ? classifyHazard(selectedDam) : null;
-
-  const scenarios = [
-    { id: '40000000-0000-0000-0000-000000000001', name: 'Overtopping — Expected' },
-    { id: '40000000-0000-0000-0000-000000000002', name: 'Piping — Conservative' },
-  ];
 
   return (
     <div className="flex flex-col h-full" style={{ minHeight: 'calc(100vh - 3.5rem)' }}>
       {/* Header */}
-      <div className="shrink-0 space-y-3 pb-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-800">Incident Console</h1>
-            <p className="text-slate-500 mt-1">Click any dam to view its safety data</p>
+      <div className="shrink-0 flex items-center justify-between pb-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">Incident Console</h1>
+          <p className="text-slate-500 mt-1">GeoLibre-powered GIS • Click any dam to view safety data</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+            isConnected ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'
+          }`}>
+            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-500' : 'bg-yellow-400 animate-pulse'}`} />
+            {isConnected ? 'GeoLibre Connected' : 'Connecting...'}
           </div>
           <div className="bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-semibold">
             <MapPin className="w-3.5 h-3.5 inline mr-1" />
             {INDIA_DAMS.length} Dams Indexed
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-semibold text-slate-600">Scenario:</span>
-          <div className="flex gap-2">
-            {scenarios.map((s) => (
-              <button key={s.id} onClick={() => setSimRunId(s.id)}
-                className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                  simRunId === s.id ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300'
-                }`}>{s.name}</button>
-            ))}
-          </div>
-        </div>
       </div>
 
-      {/* Main content */}
+      {/* Main content: sidebar + GeoLibre iframe + data panel */}
       <div className="flex-1 flex gap-3 min-h-0">
-        {/* Map */}
-        <div className="relative rounded-lg overflow-hidden border border-slate-200 bg-slate-100"
-          style={{ flex: selectedDam ? '1 1 50%' : '1 1 100%' }}>
-          <ErrorBoundary fallbackLabel="Map Error">
-            <EnhancedMap center={[70.85, 22.83]} zoom={11} layer="depth"
-              timeMinutes={timeMinutes} impactData={impactData}
-              cameraTarget={cameraTarget} onCameraChange={setCameraTarget}
-              onDamClick={handleDamClick} />
-          </ErrorBoundary>
-          {impactData && (
-            <div className="absolute top-4 right-4 z-10 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-1.5 shadow-md">
-              <div className="flex items-center gap-2 text-xs text-slate-600">
-                <div className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-yellow-400 animate-pulse' : 'bg-green-500'}`} />
-                <span>{impactData.villages.filter((v) => v.flooded).length}/{impactData.villages.length} flooded</span>
-                <span className="text-slate-400">|</span>
-                <span>{impactData.villages.reduce((s, v) => s + v.population, 0).toLocaleString()} at risk</span>
+        {/* Dam sidebar */}
+        <div className="bg-white rounded-lg border border-slate-200 p-4 overflow-y-auto" style={{ flex: '0 0 300px' }}>
+          <h3 className="text-sm font-bold text-slate-800 mb-2">India Dam Index</h3>
+          <p className="text-xs text-slate-500 mb-3">
+            {INDIA_DAMS.length} major dams. Click to fly to it in GeoLibre.
+          </p>
+
+          {/* Search */}
+          <div className="relative mb-3">
+            <input
+              type="text"
+              placeholder="Search dams..."
+              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-blue-400"
+              onChange={(e) => {
+                const q = e.target.value.toLowerCase();
+                const results = INDIA_DAMS.filter(d =>
+                  d.name.toLowerCase().includes(q) ||
+                  d.state.toLowerCase().includes(q) ||
+                  d.river.toLowerCase().includes(q)
+                );
+                if (results.length === 1) handleDamClick(results[0]);
+              }}
+            />
+          </div>
+
+          {/* Height distribution */}
+          <div className="space-y-1.5 mb-4">
+            <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Height Distribution</p>
+            {[
+              { label: 'Mega (>200m)', color: '#dc2626', count: INDIA_DAMS.filter(d => d.height_m > 200).length },
+              { label: 'Large (150-200m)', color: '#ea580c', count: INDIA_DAMS.filter(d => d.height_m >= 150 && d.height_m <= 200).length },
+              { label: 'Medium (100-150m)', color: '#ca8a04', count: INDIA_DAMS.filter(d => d.height_m >= 100 && d.height_m < 150).length },
+              { label: 'Standard (50-100m)', color: '#2563eb', count: INDIA_DAMS.filter(d => d.height_m >= 50 && d.height_m < 100).length },
+              { label: 'Small (<50m)', color: '#6b7280', count: INDIA_DAMS.filter(d => d.height_m < 50).length },
+            ].map(({ label, color, count }) => (
+              <div key={label} className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                <span className="text-xs text-slate-600 flex-1">{label}</span>
+                <span className="text-xs font-bold text-slate-800">{count}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* All dams list */}
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2">All Dams</p>
+            <div className="space-y-1 max-h-[50vh] overflow-y-auto">
+              {INDIA_DAMS.sort((a, b) => b.height_m - a.height_m).map((dam) => (
+                <button key={dam.id} onClick={() => handleDamClick(dam)}
+                  className={`w-full flex items-center gap-2 text-left p-2 rounded-lg transition-colors group ${
+                    selectedDam?.id === dam.id ? 'bg-blue-50 border border-blue-200' : 'hover:bg-slate-50'
+                  }`}>
+                  <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: classifyHazard(dam).color }} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-slate-700 truncate group-hover:text-blue-600">{dam.name}</p>
+                    <p className="text-[10px] text-slate-400">{dam.state} • {dam.river}</p>
+                  </div>
+                  <span className="text-xs font-bold text-slate-500 shrink-0">{dam.height_m}m</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* GeoLibre iframe — the actual GIS platform */}
+        <div className="relative flex-1 rounded-lg overflow-hidden border border-slate-200">
+          {mapLoading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-100">
+              <div className="text-center">
+                <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                <p className="text-sm font-semibold text-slate-600">Loading GeoLibre...</p>
+                <p className="text-xs text-slate-400 mt-1">Starting at {GEOLIBRE_URL}</p>
               </div>
             </div>
           )}
+          <iframe
+            ref={iframeRef}
+            src={GEOLIBRE_URL}
+            className="w-full h-full border-0"
+            style={{ minHeight: 'calc(100vh - 10rem)' }}
+            onLoad={() => setMapLoading(false)}
+            allow="accelerometer; camera; geolocation; clipboard-write"
+            title="GeoLibre GIS Map"
+          />
         </div>
 
-        {/* Data panel when dam selected */}
+        {/* Dam data panel when selected */}
         {selectedDam && (
-          <div className="flex flex-col gap-3" style={{ flex: '0 0 380px' }}
+          <div className="flex flex-col" style={{ flex: '0 0 360px' }}
             onClick={(e) => e.stopPropagation()}>
             <div className="bg-white rounded-lg border border-slate-200 p-4 overflow-y-auto flex-1">
               <div className="flex items-start justify-between mb-3">
@@ -166,6 +265,8 @@ export default function IncidentConsole() {
                   { label: 'Capacity', value: `${selectedDam.capacity_mcm.toLocaleString()} MCM` },
                   { label: 'Type', value: formatType(selectedDam.type) },
                   { label: 'Year Built', value: selectedDam.year_built > 0 ? String(selectedDam.year_built) : `${Math.abs(selectedDam.year_built)} BC` },
+                  { label: 'Latitude', value: selectedDam.lat.toFixed(4) },
+                  { label: 'Longitude', value: selectedDam.lon.toFixed(4) },
                 ].map(({ label, value }) => (
                   <div key={label} className="bg-slate-50 rounded-lg p-2.5">
                     <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">{label}</p>
@@ -196,79 +297,18 @@ export default function IncidentConsole() {
                   <p className="text-xs text-slate-500 mt-2">{hazard.description}</p>
                 </div>
               )}
-            </div>
-          </div>
-        )}
 
-        {/* Quick info panel when no dam selected */}
-        {!selectedDam && (
-          <div className="bg-white rounded-lg border border-slate-200 p-4" style={{ flex: '0 0 320px' }}>
-            <h3 className="text-sm font-bold text-slate-800 mb-3">India Dam Index</h3>
-            <p className="text-xs text-slate-500 mb-3">
-              {INDIA_DAMS.length} major dams across India from GRanD. Click any dam dot to view details.
-            </p>
-            <div className="space-y-2 mb-4">
-              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Height Distribution</p>
-              {[
-                { label: 'Mega (>200m)', color: '#dc2626', count: INDIA_DAMS.filter(d => d.height_m > 200).length },
-                { label: 'Large (150-200m)', color: '#ea580c', count: INDIA_DAMS.filter(d => d.height_m >= 150 && d.height_m <= 200).length },
-                { label: 'Medium (100-150m)', color: '#ca8a04', count: INDIA_DAMS.filter(d => d.height_m >= 100 && d.height_m < 150).length },
-                { label: 'Standard (50-100m)', color: '#2563eb', count: INDIA_DAMS.filter(d => d.height_m >= 50 && d.height_m < 100).length },
-                { label: 'Small (<50m)', color: '#6b7280', count: INDIA_DAMS.filter(d => d.height_m < 50).length },
-              ].map(({ label, color, count }) => (
-                <div key={label} className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
-                  <span className="text-xs text-slate-600 flex-1">{label}</span>
-                  <span className="text-xs font-bold text-slate-800">{count}</span>
-                </div>
-              ))}
-            </div>
-            <div>
-              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2">Top 5 Tallest Dams</p>
-              <div className="space-y-1.5">
-                {INDIA_DAMS.sort((a, b) => b.height_m - a.height_m).slice(0, 5).map((dam) => (
-                  <button key={dam.id} onClick={() => handleDamClick(dam)}
-                    className="w-full flex items-center gap-2 text-left p-2 rounded-lg hover:bg-slate-50 transition-colors group">
-                    <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: classifyHazard(dam).color }} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-slate-700 truncate group-hover:text-blue-600">{dam.name}</p>
-                      <p className="text-[10px] text-slate-400">{dam.state} • {dam.river}</p>
-                    </div>
-                    <span className="text-xs font-bold text-slate-500 shrink-0">{dam.height_m}m</span>
-                  </button>
-                ))}
+              {/* Coordinates for GeoLibre */}
+              <div className="border-t border-slate-100 pt-3 mt-3">
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2">GeoLibre Actions</p>
+                <button onClick={() => flyToDam(selectedDam)}
+                  className="w-full px-3 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">
+                  Fly to Dam in GeoLibre
+                </button>
               </div>
             </div>
           </div>
         )}
-      </div>
-
-      {/* Time slider */}
-      <div className="shrink-0 bg-white rounded-lg border border-slate-200 px-4 py-3 mt-3">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <button onClick={() => setIsPlaying(!isPlaying)}
-              className="p-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors">
-              {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-            </button>
-            <button onClick={() => { setTimeMinutes(0); setIsPlaying(false); }}
-              className="p-2 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200">
-              <RotateCcw className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="flex-1">
-            <input type="range" min={0} max={120} value={timeMinutes}
-              onChange={(e) => setTimeMinutes(Number(e.target.value))}
-              className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600" />
-            <div className="flex justify-between text-[10px] text-slate-400 mt-1 px-1">
-              <span>0</span><span>30</span><span>60</span><span>90</span><span>120 min</span>
-            </div>
-          </div>
-          <div className="text-lg font-mono font-bold text-slate-800 min-w-[110px] text-right">
-            <Clock className="w-4 h-4 inline mr-1 text-slate-400" />
-            T+{timeMinutes} min
-          </div>
-        </div>
       </div>
     </div>
   );

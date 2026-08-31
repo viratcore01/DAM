@@ -17,6 +17,7 @@
     "@deck.gl/mapbox": "^9.3.11",
     "@deck.gl/react": "^9.3.11",
     "@duckdb/duckdb-wasm": "^1.33.1-dev57.0",
+    "@geolibre/embed": "^2.8.0",
     "@loaders.gl/terrain": "^4.4.5",
     "cesium": "^1.121.0",
     "clsx": "^2.1.1",
