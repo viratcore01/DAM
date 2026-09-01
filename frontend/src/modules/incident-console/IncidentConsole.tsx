@@ -170,12 +170,11 @@ export default function IncidentConsole() {
   const pendingMessages = useRef<Array<{ msg: object; target: string }>>([]);
   const geolibreReady = useRef(false);
 
-  // Listen for 'ready' event from GeoLibre
+  // Listen for 'ready' event from GeoLibre embed API
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       if (event.data?.type === 'ready' && event.data?.source === 'geolibre-embed') {
         geolibreReady.current = true;
-        // Flush queued messages
         for (const { msg, target } of pendingMessages.current) {
           iframeRef.current?.contentWindow?.postMessage(msg, target);
         }
@@ -305,7 +304,7 @@ export default function IncidentConsole() {
         {geolibreOnline ? (
           <iframe
             ref={iframeRef}
-            src={GEOLIBRE_URL}
+            src={`${GEOLIBRE_URL}&maponly&panels=collapsed`}
             className="w-full h-full border-0"
             style={{ minHeight: 'calc(100vh - 3.5rem)' }}
             allow="accelerometer; camera; geolocation; clipboard-write"
