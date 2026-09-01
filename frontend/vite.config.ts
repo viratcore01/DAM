@@ -4,7 +4,21 @@ import cesium from 'vite-plugin-cesium';
 import path from 'path';
 
 export default defineConfig({
-  plugins: [react(), cesium()],
+  plugins: [
+    react(),
+    cesium(),
+    // CORS middleware so GeoLibre (localhost:5175) can fetch /india-dams.geojson
+    {
+      name: 'cors-headers',
+      configureServer(server) {
+        server.middlewares.use((_req, res, next) => {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET');
+          next();
+        });
+      },
+    },
+  ],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

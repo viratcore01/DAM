@@ -2,17 +2,19 @@
  * DamSafe Twin — Incident Console
  *
  * Auto-detects GeoLibre:
- *   - If GeoLibre is running → embed it as full-screen iframe (real 3D earth with terrain, layers, all GIS tools)
+ *   - If GeoLibre is running → embed it with all 138 dams loaded via ?data= GeoJSON
  *   - If GeoLibre is NOT running → render inline MapLibre GL JS map with dam dots
  *
  * Both modes show the dam sidebar with search + data panel overlay.
+ * Clicking a dam flies the GeoLibre map to it via postMessage with retry.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { X, Users, Droplets, AlertTriangle, PanelLeftClose, PanelLeft, Globe, Search } from 'lucide-react';
 import { INDIA_DAMS, DamPoint } from '../../data/india-dams';
 
-const GEOLIBRE_URL = 'http://localhost:5175/?embed=1';
+const GEOLIBRE_BASE = 'http://localhost:5175';
+const DAMS_GEOJSON_URL = 'http://localhost:3000/india-dams.geojson';
 
 function classifyHazard(dam: DamPoint) {
   const heightScore = Math.min(dam.height_m / 300, 1);
@@ -70,17 +72,11 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
       const map = new maplibregl.Map({
         container: mapContainer.current!,
         style: {
-          version: 8,
-          name: 'DamSafe Globe',
-          sources: {
-            osm: { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© OpenStreetMap' },
-          },
+          version: 8, name: 'DamSafe Globe',
+          sources: { osm: { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© OpenStreetMap' } },
           layers: [{ id: 'osm-tiles', type: 'raster', source: 'osm' }],
         },
-        center: [78.9, 20.6],
-        zoom: 4.5,
-        pitch: 45,
-        maxPitch: 60,
+        center: [78.9, 20.6], zoom: 4.5, pitch: 45, maxPitch: 60,
       });
 
       map.addControl(new maplibregl.NavigationControl(), 'top-right');
@@ -90,37 +86,13 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
         const features = INDIA_DAMS.map((dam) => ({
           type: 'Feature' as const,
           geometry: { type: 'Point' as const, coordinates: [dam.lon, dam.lat] },
-          properties: {
-            id: dam.id, name: dam.name, state: dam.state, river: dam.river,
-            height_m: dam.height_m, capacity_mcm: dam.capacity_mcm,
-            type: dam.type, year_built: dam.year_built,
-            hazard_color: classifyHazard(dam).color,
-          },
+          properties: { id: dam.id, name: dam.name, state: dam.state, river: dam.river, height_m: dam.height_m, capacity_mcm: dam.capacity_mcm, type: dam.type, year_built: dam.year_built, hazard_color: classifyHazard(dam).color },
         }));
 
         map.addSource('dams', { type: 'geojson', data: { type: 'FeatureCollection', features } });
-
-        map.addLayer({
-          id: 'dams-glow', type: 'circle', source: 'dams',
-          paint: {
-            'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 6, 300, 18],
-            'circle-color': ['get', 'hazard_color'], 'circle-opacity': 0.25, 'circle-blur': 1,
-          },
-        });
-
-        map.addLayer({
-          id: 'dams-dots', type: 'circle', source: 'dams',
-          paint: {
-            'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 3, 300, 9],
-            'circle-color': ['get', 'hazard_color'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5, 'circle-opacity': 0.9,
-          },
-        });
-
-        map.addLayer({
-          id: 'dams-labels', type: 'symbol', source: 'dams',
-          layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': [0, 1.5], 'text-anchor': 'top', 'text-allow-overlap': false },
-          paint: { 'text-color': '#1e293b', 'text-halo-color': '#fff', 'text-halo-width': 1.5 },
-        });
+        map.addLayer({ id: 'dams-glow', type: 'circle', source: 'dams', paint: { 'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 6, 300, 18], 'circle-color': ['get', 'hazard_color'], 'circle-opacity': 0.25, 'circle-blur': 1 } });
+        map.addLayer({ id: 'dams-dots', type: 'circle', source: 'dams', paint: { 'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 3, 300, 9], 'circle-color': ['get', 'hazard_color'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5, 'circle-opacity': 0.9 } });
+        map.addLayer({ id: 'dams-labels', type: 'symbol', source: 'dams', layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': [0, 1.5], 'text-anchor': 'top', 'text-allow-overlap': false }, paint: { 'text-color': '#1e293b', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } });
 
         map.on('click', 'dams-dots', (e: any) => {
           if (!e.features?.length) return;
@@ -151,60 +123,76 @@ export default function IncidentConsole() {
   const [selectedDam, setSelectedDam] = useState<DamPoint | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [geolibreOnline, setGeolibreOnline] = useState<boolean | null>(null); // null = checking
+  const [geolibreOnline, setGeolibreOnline] = useState<boolean | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [geolibreReady, setGeolibreReady] = useState(false);
 
   // Check if GeoLibre is running
   useEffect(() => {
     const check = () => {
-      fetch(GEOLIBRE_URL, { mode: 'no-cors' })
+      fetch(GEOLIBRE_BASE, { mode: 'no-cors' })
         .then(() => setGeolibreOnline(true))
         .catch(() => setGeolibreOnline(false));
     };
     check();
-    const interval = setInterval(check, 10000); // re-check every 10s
+    const interval = setInterval(check, 10000);
     return () => clearInterval(interval);
   }, []);
 
-  // Queue messages until GeoLibre iframe is ready
-  const pendingMessages = useRef<Array<{ msg: object; target: string }>>([]);
-  const geolibreReady = useRef(false);
-
-  // Listen for 'ready' event from GeoLibre embed API
+  // Listen for GeoLibre 'ready' event
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       if (event.data?.type === 'ready' && event.data?.source === 'geolibre-embed') {
-        geolibreReady.current = true;
-        for (const { msg, target } of pendingMessages.current) {
-          iframeRef.current?.contentWindow?.postMessage(msg, target);
-        }
-        pendingMessages.current = [];
+        setGeolibreReady(true);
       }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
   }, []);
 
+  // Also listen for ack events
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === 'ack' && event.data?.source === 'geolibre-embed') {
+        console.log('[DamSafe] GeoLibre ack:', event.data.payload);
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  // Robust fly-to with retries
   const flyToDam = useCallback((dam: DamPoint) => {
     if (!iframeRef.current?.contentWindow) return;
+
     const msg = {
       v: 1,
       type: 'setView',
-      payload: { center: [dam.lon, dam.lat], zoom: 12 },
+      payload: { center: [dam.lon, dam.lat], zoom: 12, duration: 2000 },
       requestId: `dam-${dam.id}-${Date.now()}`,
     };
-    const target = GEOLIBRE_URL.replace(/\?.*/, ''); // target origin (no query params)
-    if (geolibreReady.current) {
-      iframeRef.current.contentWindow.postMessage(msg, target);
-    } else {
-      pendingMessages.current.push({ msg, target });
-    }
+    const target = GEOLIBRE_BASE;
+
+    // Send immediately + retries
+    const send = () => {
+      try {
+        iframeRef.current?.contentWindow?.postMessage(msg, target);
+        console.log('[DamSafe] Sent setView to GeoLibre:', msg);
+      } catch (err) {
+        console.warn('[DamSafe] postMessage failed:', err);
+      }
+    };
+
+    send();
+    // Retry at 1s, 2s, 4s in case GeoLibre wasn't ready
+    const timers = [setTimeout(send, 1000), setTimeout(send, 2000), setTimeout(send, 4000)];
+    return () => timers.forEach(clearTimeout);
   }, []);
 
   const handleDamClick = useCallback((dam: DamPoint) => {
     setSelectedDam(dam);
-    if (geolibreOnline) flyToDam(dam);
-  }, [flyToDam, geolibreOnline]);
+    flyToDam(dam);
+  }, [flyToDam]);
 
   const hazard = selectedDam ? classifyHazard(selectedDam) : null;
 
@@ -216,9 +204,12 @@ export default function IncidentConsole() {
       )
     : INDIA_DAMS.sort((a, b) => b.height_m - a.height_m);
 
+  // Build GeoLibre iframe URL with dams data
+  const geolibreSrc = `${GEOLIBRE_BASE}/?embed=1&maponly&data=${encodeURIComponent(DAMS_GEOJSON_URL)}`;
+
   return (
     <div className="flex h-full w-full relative overflow-hidden">
-      {/* Dam sidebar (overlays on top) */}
+      {/* Dam sidebar */}
       {sidebarOpen && (
         <div className="w-72 bg-white/95 backdrop-blur-sm border-r border-slate-200 flex flex-col shrink-0 z-10 shadow-lg"
           onClick={(e) => e.stopPropagation()}>
@@ -233,7 +224,7 @@ export default function IncidentConsole() {
               </button>
             </div>
             <p className="text-xs text-slate-500 mb-3">
-              {INDIA_DAMS.length} dams. {geolibreOnline ? 'Click to fly in GeoLibre 3D.' : 'Click to fly on the map.'}
+              {INDIA_DAMS.length} dams loaded into GeoLibre.
             </p>
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
@@ -280,7 +271,7 @@ export default function IncidentConsole() {
         </div>
       )}
 
-      {/* Map area — GeoLibre iframe or inline MapLibre */}
+      {/* Map area */}
       <div className="flex-1 relative">
         {!sidebarOpen && (
           <button onClick={() => setSidebarOpen(true)}
@@ -289,22 +280,22 @@ export default function IncidentConsole() {
           </button>
         )}
 
-        {/* Status badge */}
         <div className="absolute top-3 right-14 z-20">
           {geolibreOnline === null ? (
             <div className="px-3 py-1.5 bg-yellow-500 text-white text-[10px] font-bold rounded-full animate-pulse">Checking GeoLibre...</div>
           ) : geolibreOnline ? (
-            <div className="px-3 py-1.5 bg-green-500 text-white text-[10px] font-bold rounded-full">● GeoLibre 3D Earth</div>
+            <div className="px-3 py-1.5 bg-green-500 text-white text-[10px] font-bold rounded-full">
+              ● GeoLibre 3D Earth {geolibreReady ? '(Ready)' : '(Loading...)'}
+            </div>
           ) : (
             <div className="px-3 py-1.5 bg-blue-500 text-white text-[10px] font-bold rounded-full">● MapLibre Map</div>
           )}
         </div>
 
-        {/* Render GeoLibre iframe OR inline map */}
         {geolibreOnline ? (
           <iframe
             ref={iframeRef}
-            src={`${GEOLIBRE_URL}&maponly&panels=collapsed`}
+            src={geolibreSrc}
             className="w-full h-full border-0"
             style={{ minHeight: 'calc(100vh - 3.5rem)' }}
             allow="accelerometer; camera; geolocation; clipboard-write"
@@ -381,14 +372,12 @@ export default function IncidentConsole() {
               </div>
             )}
 
-            {geolibreOnline && (
-              <div className="border-t border-slate-100 pt-3 mt-3">
-                <button onClick={() => flyToDam(selectedDam)}
-                  className="w-full px-3 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">
-                  Fly to Dam in GeoLibre
-                </button>
-              </div>
-            )}
+            <div className="border-t border-slate-100 pt-3 mt-3">
+              <button onClick={() => flyToDam(selectedDam)}
+                className="w-full px-3 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">
+                Fly to Dam in GeoLibre
+              </button>
+            </div>
           </div>
         </div>
       )}
