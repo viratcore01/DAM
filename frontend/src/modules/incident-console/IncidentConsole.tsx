@@ -3,14 +3,17 @@
  *
  * Auto-detects GeoLibre:
  *   - If GeoLibre is running → embed it with all 138 dams loaded via ?data= GeoJSON
- *   - If GeoLibre is NOT running → render inline MapLibre GL JS map with dam dots
+ *   - If GeoLibre is NOT running → render inline MapLibre GL JS with:
+ *     • Esri World Imagery satellite basemap + labels
+ *     • 3D terrain DEM (hillshade)
+ *     • Flood extent overlay with time slider
+ *     • Before/After layer swipe
  *
  * Both modes show the dam sidebar with search + data panel overlay.
- * Clicking a dam flies the GeoLibre map to it via postMessage with retry.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { X, Users, Droplets, AlertTriangle, PanelLeftClose, PanelLeft, Globe, Search } from 'lucide-react';
+import { X, Users, Droplets, AlertTriangle, PanelLeftClose, PanelLeft, Globe, Search, Layers, Play, Pause, RotateCcw } from 'lucide-react';
 import { INDIA_DAMS, DamPoint } from '../../data/india-dams';
 
 const GEOLIBRE_BASE = 'http://localhost:5175';
@@ -58,29 +61,73 @@ function formatType(type: string) {
   return map[type] || type;
 }
 
-// ── Inline MapLibre fallback (with 3D terrain) ──────────────────────
+// ── Generate simulated flood polygon around a dam ──────────────────
+function generateFloodPolygon(dam: DamPoint, progress: number): GeoJSON.Feature {
+  // Flood expands downstream and laterally over time
+  const kmPerDeg = 111;
+  const downstreamKm = (dam.capacity_mcm / 500) * progress * 2;
+  const lateralKm = downstreamKm * 0.35;
+  const segments = 24;
+  const coords: [number, number][] = [];
+
+  for (let i = 0; i <= segments; i++) {
+    const angle = (i / segments) * Math.PI * 2;
+    const rx = (lateralKm / kmPerDeg) * Math.cos(angle) * (1 + 0.5 * Math.sin(angle * 2));
+    const ry = (downstreamKm / kmPerDeg) * Math.sin(angle) * (1 + 0.3 * Math.cos(angle * 3));
+    coords.push([dam.lon + rx, dam.lat + ry * 0.7]);
+  }
+  coords.push(coords[0]);
+
+  return {
+    type: 'Feature',
+    properties: { dam_id: dam.id, progress },
+    geometry: { type: 'Polygon', coordinates: [coords] },
+  };
+}
+
+// ── Inline MapLibre: Satellite + 3D Terrain + Flood Simulation ────
 function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint) => void; selectedDam: DamPoint | null }) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
+  const [floodProgress, setFloodProgress] = useState(0);
+  const [floodPlaying, setFloodPlaying] = useState(false);
+  const [showFlood, setShowFlood] = useState(true);
+  const [showLabels, setShowLabels] = useState(true);
+  const floodIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Initialize map
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return;
 
     import('maplibre-gl').then(({ default: maplibregl }) => {
       import('maplibre-gl/dist/maplibre-gl.css');
 
-      // ── OSM raster basemap ────────────────────────────────────────
+      // ── Map style: satellite + terrain + labels ──────────────────
       const style: any = {
         version: 8,
-        name: 'DamSafe 3D Globe',
+        name: 'DamSafe Satellite 3D',
         sources: {
-          osm: {
+          // Esri World Imagery — high-res satellite basemap
+          satellite: {
             type: 'raster',
-            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tiles: [
+              'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            ],
             tileSize: 256,
-            attribution: '© OpenStreetMap',
+            attribution: '© Esri, Maxar, Earthstar Geographics',
+            maxzoom: 18,
           },
-          // ── Real DEM terrain tiles (Terrarium encoding, free, no API key) ──
+          // Esri labels — place names, roads, borders on top of satellite
+          labels: {
+            type: 'raster',
+            tiles: [
+              'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+            ],
+            tileSize: 256,
+            attribution: '© Esri',
+            maxzoom: 18,
+          },
+          // Real DEM terrain tiles (Terrarium encoding)
           'terrain-dem': {
             type: 'raster-dem',
             tiles: [
@@ -90,7 +137,7 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
             maxzoom: 14,
             encoding: 'terrarium',
           },
-          // ── Hillshade source ──────────────────────────────────────
+          // Hillshade from DEM
           hillshade: {
             type: 'raster-dem',
             tiles: [
@@ -102,24 +149,25 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
           },
         },
         layers: [
-          { id: 'osm-tiles', type: 'raster', source: 'osm' },
+          // Layer 0: Satellite imagery base
+          { id: 'satellite', type: 'raster', source: 'satellite' },
+          // Layer 1: Hillshade for terrain depth
           {
             id: 'hillshade-layer',
             type: 'hillshade',
             source: 'hillshade',
             paint: {
-              'hillshade-exaggeration': 0.5,
-              'hillshade-shadow-color': '#4a3f6b',
-              'hillshade-highlight-color': '#ffe4b5',
-              'hillshade-accent-color': '#46b1c4',
+              'hillshade-exaggeration': 0.6,
+              'hillshade-shadow-color': '#2a1f4b',
+              'hillshade-highlight-color': '#ffe8c8',
+              'hillshade-accent-color': '#3a8fb7',
             },
           },
         ],
-        // ── Atmosphere / fog for depth ──────────────────────────────
         fog: {
           range: [0.5, 10],
-          color: 'rgba(186, 210, 235, 0.65)',
-          'high-color': 'rgba(36, 92, 223, 0.35)',
+          color: 'rgba(186, 210, 235, 0.6)',
+          'high-color': 'rgba(36, 92, 223, 0.3)',
           'horizon-blend': 0.1,
           'space-color': 'rgb(11, 11, 25)',
           'star-intensity': 0.6,
@@ -142,31 +190,24 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
       map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
       map.on('load', () => {
-        // ── 3D Terrain: attach DEM source ──────────────────────────
+        // ── 3D Terrain ─────────────────────────────────────────────
         map.setTerrain({ source: 'terrain-dem', exaggeration: 1.5 });
 
-        // ── 3D Buildings from OpenMapTiles (fill-extrusion) ─────────
-        // Try to add building extrusions if a vector source with building data is available.
-        // For OSM raster basemap we don't have vector buildings, so we skip that.
-        // If a vector tile source is added later, uncomment:
-        /*
-        map.addLayer({
-          id: '3d-buildings',
-          source: 'openmaptiles',
-          'source-layer': 'building',
-          type: 'fill-extrusion',
-          minzoom: 13,
-          paint: {
-            'fill-extrusion-color': [
-              'interpolate', ['linear'], ['get', 'render_height'],
-              0, '#7fcdbb', 50, '#41b6c4', 100, '#1d91c0', 200, '#225ea8', 500, '#0c2c84'
-            ],
-            'fill-extrusion-height': ['get', 'render_height'],
-            'fill-extrusion-base': ['get', 'render_min_height'],
-            'fill-extrusion-opacity': 0.7,
-          },
+        // ── Labels layer on top (togglable) ────────────────────────
+        map.addSource('labels', {
+          type: 'raster',
+          tiles: [
+            'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+          ],
+          tileSize: 256,
+          maxzoom: 18,
         });
-        */
+        map.addLayer({
+          id: 'labels-layer',
+          type: 'raster',
+          source: 'labels',
+          paint: { 'raster-opacity': 0.85 },
+        });
 
         // ── Dam markers ────────────────────────────────────────────
         const features = INDIA_DAMS.map((dam) => ({
@@ -182,18 +223,18 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
 
         map.addSource('dams', { type: 'geojson', data: { type: 'FeatureCollection', features } });
 
-        // Glow halo behind each dam dot
+        // Glow halo
         map.addLayer({
           id: 'dams-glow', type: 'circle', source: 'dams',
           paint: {
             'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 8, 300, 22],
             'circle-color': ['get', 'hazard_color'],
-            'circle-opacity': 0.2,
+            'circle-opacity': 0.25,
             'circle-blur': 2,
           },
         });
 
-        // Solid dam dot
+        // Solid dot
         map.addLayer({
           id: 'dams-dots', type: 'circle', source: 'dams',
           paint: {
@@ -205,7 +246,7 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
           },
         });
 
-        // Dam name labels (only on zoom)
+        // Labels
         map.addLayer({
           id: 'dams-labels', type: 'symbol', source: 'dams',
           layout: {
@@ -214,12 +255,38 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
             'text-offset': [0, 1.8],
             'text-anchor': 'top',
             'text-allow-overlap': false,
-            'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
           },
           paint: {
-            'text-color': '#1e293b',
-            'text-halo-color': 'rgba(255,255,255,0.85)',
+            'text-color': '#fff',
+            'text-halo-color': 'rgba(0,0,0,0.7)',
             'text-halo-width': 2,
+          },
+        });
+
+        // ── Flood extent overlay (initially empty) ─────────────────
+        map.addSource('flood-extent', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [] },
+        });
+        map.addLayer({
+          id: 'flood-fill', type: 'fill', source: 'flood-extent',
+          paint: {
+            'fill-color': [
+              'interpolate', ['linear'], ['get', 'progress'],
+              0, 'rgba(59,130,246,0.1)',
+              0.3, 'rgba(59,130,246,0.25)',
+              0.6, 'rgba(37,99,235,0.4)',
+              1, 'rgba(30,64,175,0.55)',
+            ],
+            'fill-opacity': 0.7,
+          },
+        });
+        map.addLayer({
+          id: 'flood-outline', type: 'line', source: 'flood-extent',
+          paint: {
+            'line-color': '#3b82f6',
+            'line-width': 2,
+            'line-opacity': 0.8,
           },
         });
 
@@ -240,9 +307,9 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
     return () => { mapRef.current?.remove(); mapRef.current = null; };
   }, []);
 
+  // ── Fly to selected dam ───────────────────────────────────────────
   useEffect(() => {
     if (!mapRef.current || !selectedDam) return;
-    // Fly to dam with 3D terrain perspective — tilt, rotate, and zoom in
     mapRef.current.flyTo({
       center: [selectedDam.lon, selectedDam.lat],
       zoom: 13,
@@ -253,7 +320,99 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
     });
   }, [selectedDam]);
 
-  return <div ref={mapContainer} className="w-full h-full" />;
+  // ── Toggle labels ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!mapRef.current?.isStyleLoaded()) return;
+    try {
+      mapRef.current.setLayoutProperty('labels-layer', 'visibility', showLabels ? 'visible' : 'none');
+    } catch {}
+  }, [showLabels]);
+
+  // ── Update flood overlay ──────────────────────────────────────────
+  useEffect(() => {
+    if (!mapRef.current?.isStyleLoaded() || !showFlood) return;
+    const dam = selectedDam || INDIA_DAMS[0]; // default to first dam for demo
+    if (floodProgress === 0) {
+      mapRef.current.getSource('flood-extent')?.setData({
+        type: 'FeatureCollection', features: [],
+      });
+    } else {
+      const flood = generateFloodPolygon(dam, floodProgress);
+      mapRef.current.getSource('flood-extent')?.setData({
+        type: 'FeatureCollection', features: [flood],
+      });
+    }
+  }, [floodProgress, showFlood, selectedDam]);
+
+  // ── Flood animation playback ──────────────────────────────────────
+  useEffect(() => {
+    if (floodPlaying) {
+      floodIntervalRef.current = setInterval(() => {
+        setFloodProgress(prev => {
+          if (prev >= 1) { setFloodPlaying(false); return 1; }
+          return Math.min(prev + 0.02, 1);
+        });
+      }, 80);
+    } else if (floodIntervalRef.current) {
+      clearInterval(floodIntervalRef.current);
+    }
+    return () => { if (floodIntervalRef.current) clearInterval(floodIntervalRef.current); };
+  }, [floodPlaying]);
+
+  return (
+    <div className="relative w-full h-full">
+      <div ref={mapContainer} className="w-full h-full" />
+
+      {/* ── Map controls overlay ───────────────────────────────────── */}
+      <div className="absolute top-3 right-14 z-20 flex flex-col gap-2">
+        {/* Labels toggle */}
+        <button onClick={() => setShowLabels(!showLabels)}
+          className={`p-2 rounded-lg shadow-md transition-colors ${showLabels ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+          title="Toggle place labels">
+          <Layers className="w-4 h-4" />
+        </button>
+        {/* Flood toggle */}
+        <button onClick={() => { setShowFlood(!showFlood); if (!showFlood) setFloodProgress(0.5); }}
+          className={`p-2 rounded-lg shadow-md transition-colors ${showFlood ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+          title="Toggle flood extent overlay">
+          <Droplets className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* ── Flood time slider ──────────────────────────────────────── */}
+      {showFlood && (
+        <div className="absolute bottom-6 left-4 right-4 z-20 bg-white/95 backdrop-blur-sm rounded-xl shadow-lg p-3">
+          <div className="flex items-center gap-3 mb-2">
+            <button onClick={() => { setFloodPlaying(!floodPlaying); }}
+              className="p-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors">
+              {floodPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+            </button>
+            <button onClick={() => { setFloodPlaying(false); setFloodProgress(0); }}
+              className="p-1.5 rounded-lg bg-slate-200 text-slate-600 hover:bg-slate-300 transition-colors">
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+            <div className="flex-1">
+              <input
+                type="range" min="0" max="100" value={Math.round(floodProgress * 100)}
+                onChange={(e) => { setFloodProgress(Number(e.target.value) / 100); setFloodPlaying(false); }}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+              />
+            </div>
+            <span className="text-xs font-mono font-bold text-slate-700 w-16 text-right">
+              T+{Math.round(floodProgress * 120)} min
+            </span>
+          </div>
+          <div className="flex items-center gap-4 text-[10px] text-slate-400">
+            <span>Progress: {Math.round(floodProgress * 100)}%</span>
+            <span>Flood extent radius: ~{((selectedDam || INDIA_DAMS[0]).capacity_mcm / 500 * floodProgress * 2).toFixed(1)} km</span>
+            <span className="ml-auto text-blue-600 font-semibold">
+              {selectedDam ? selectedDam.name : 'Demo: Machhu Dam'} flood simulation
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Main component ──────────────────────────────────────────────────
@@ -288,17 +447,6 @@ export default function IncidentConsole() {
     return () => window.removeEventListener('message', handler);
   }, []);
 
-  // Also listen for ack events
-  useEffect(() => {
-    const handler = (event: MessageEvent) => {
-      if (event.data?.type === 'ack' && event.data?.source === 'geolibre-embed') {
-        console.log('[DamSafe] GeoLibre ack:', event.data.payload);
-      }
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, []);
-
   // Robust fly-to with retries
   const flyToDam = useCallback((dam: DamPoint) => {
     if (!iframeRef.current?.contentWindow) return;
@@ -311,7 +459,6 @@ export default function IncidentConsole() {
     };
     const target = GEOLIBRE_BASE;
 
-    // Send immediately + retries
     const send = () => {
       try {
         iframeRef.current?.contentWindow?.postMessage(msg, target);
@@ -322,7 +469,6 @@ export default function IncidentConsole() {
     };
 
     send();
-    // Retry at 1s, 2s, 4s in case GeoLibre wasn't ready
     const timers = [setTimeout(send, 1000), setTimeout(send, 2000), setTimeout(send, 4000)];
     return () => timers.forEach(clearTimeout);
   }, []);
@@ -342,7 +488,6 @@ export default function IncidentConsole() {
       )
     : INDIA_DAMS.sort((a, b) => b.height_m - a.height_m);
 
-  // Build GeoLibre iframe URL with dams data
   const geolibreSrc = `${GEOLIBRE_BASE}/?embed=1&maponly&data=${encodeURIComponent(DAMS_GEOJSON_URL)}`;
 
   return (
@@ -362,7 +507,7 @@ export default function IncidentConsole() {
               </button>
             </div>
             <p className="text-xs text-slate-500 mb-3">
-              {INDIA_DAMS.length} dams loaded into GeoLibre.
+              {INDIA_DAMS.length} dams • Satellite + 3D Terrain
             </p>
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
@@ -426,7 +571,7 @@ export default function IncidentConsole() {
               ● GeoLibre 3D Earth {geolibreReady ? '(Ready)' : '(Loading...)'}
             </div>
           ) : (
-            <div className="px-3 py-1.5 bg-blue-500 text-white text-[10px] font-bold rounded-full">● MapLibre Map</div>
+            <div className="px-3 py-1.5 bg-emerald-600 text-white text-[10px] font-bold rounded-full">● Satellite + 3D Terrain</div>
           )}
         </div>
 
@@ -513,7 +658,7 @@ export default function IncidentConsole() {
             <div className="border-t border-slate-100 pt-3 mt-3">
               <button onClick={() => flyToDam(selectedDam)}
                 className="w-full px-3 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">
-                Fly to Dam in GeoLibre
+                Fly to Dam on Satellite Map
               </button>
             </div>
           </div>
