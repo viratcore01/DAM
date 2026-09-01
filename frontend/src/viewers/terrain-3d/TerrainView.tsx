@@ -195,8 +195,8 @@ export default function TerrainView({
 
         tryTerrain();
 
-        // Fog for depth
-        map.setFog({
+        // Fog for depth (via setStyle to avoid type issues)
+        (map as any).setFog({
           range: [0.5, 12],
           color: 'rgba(186, 210, 235, 0.7)',
           'horizon-blend': 0.12,

@@ -100,7 +100,8 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
     if (!mapContainer.current || mapRef.current) return;
 
     import('maplibre-gl').then(({ default: maplibregl }) => {
-      import('maplibre-gl/dist/maplibre-gl.css');
+      // @ts-ignore — CSS side-effect import not typed
+      import('maplibre-gl/dist/maplibre-gl.css').catch(() => {});
 
       // ── Map style: satellite + terrain + labels ──────────────────
       const style: any = {
