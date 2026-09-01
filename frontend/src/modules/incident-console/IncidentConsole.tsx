@@ -1,15 +1,16 @@
 /**
  * DamSafe Twin — Incident Console
  *
- * Renders a full GeoLibre-style 3D globe with all 138 Indian dams using MapLibre GL JS.
- * No iframe needed — the map renders directly in the React app.
+ * Embeds the real GeoLibre GIS platform as a full-screen iframe.
+ * The dam sidebar overlays on top with search + data panel.
+ * GeoLibre provides the 3D globe, terrain, layers, and all GIS tools.
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { X, Users, Droplets, AlertTriangle, PanelLeftClose, PanelLeft, Globe, Search } from 'lucide-react';
-import maplibregl from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
 import { INDIA_DAMS, DamPoint } from '../../data/india-dams';
+
+const GEOLIBRE_URL = 'http://localhost:5175';
 
 function classifyHazard(dam: DamPoint) {
   const heightScore = Math.min(dam.height_m / 300, 1);
@@ -57,152 +58,36 @@ export default function IncidentConsole() {
   const [selectedDam, setSelectedDam] = useState<DamPoint | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const mapContainer = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Initialize the 3D globe map
-  useEffect(() => {
-    if (!mapContainer.current || mapRef.current) return;
-
-    const map = new maplibregl.Map({
-      container: mapContainer.current,
-      style: {
-        version: 8,
-        name: 'GeoLibre Globe',
-        sources: {
-          osm: {
-            type: 'raster',
-            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-            tileSize: 256,
-            attribution: '© OpenStreetMap contributors',
-          },
+  // Fly to dam via postMessage to GeoLibre embed API
+  const flyToDam = useCallback((dam: DamPoint) => {
+    if (!iframeRef.current?.contentWindow) return;
+    try {
+      iframeRef.current.contentWindow.postMessage(
+        {
+          v: 1,
+          type: 'setView',
+          payload: { center: [dam.lon, dam.lat], zoom: 12 },
+          requestId: `dam-${dam.id}-${Date.now()}`,
         },
-        layers: [
-          { id: 'osm-tiles', type: 'raster', source: 'osm' },
-        ],
-      },
-      center: [78.9, 20.6], // Center on India
-      zoom: 4.5,
-      pitch: 45,
-      bearing: 0,
-      maxPitch: 60,
-      attributionControl: true,
-    });
-
-    map.addControl(new maplibregl.NavigationControl(), 'top-right');
-    map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
-
-    map.on('load', () => {
-      // Add dam source as GeoJSON
-      const damFeatures = INDIA_DAMS.map((dam) => ({
-        type: 'Feature' as const,
-        geometry: { type: 'Point' as const, coordinates: [dam.lon, dam.lat] },
-        properties: {
-          id: dam.id,
-          name: dam.name,
-          state: dam.state,
-          river: dam.river,
-          height_m: dam.height_m,
-          capacity_mcm: dam.capacity_mcm,
-          type: dam.type,
-          year_built: dam.year_built,
-          hazard_color: classifyHazard(dam).color,
-        },
-      }));
-
-      map.addSource('dams', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: damFeatures },
-      });
-
-      // Dam glow (outer ring)
-      map.addLayer({
-        id: 'dams-glow',
-        type: 'circle',
-        source: 'dams',
-        paint: {
-          'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 6, 300, 18],
-          'circle-color': ['get', 'hazard_color'],
-          'circle-opacity': 0.25,
-          'circle-blur': 1,
-        },
-      });
-
-      // Dam dots (inner)
-      map.addLayer({
-        id: 'dams-dots',
-        type: 'circle',
-        source: 'dams',
-        paint: {
-          'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 3, 300, 9],
-          'circle-color': ['get', 'hazard_color'],
-          'circle-stroke-color': '#ffffff',
-          'circle-stroke-width': 1.5,
-          'circle-opacity': 0.9,
-        },
-      });
-
-      // Dam labels
-      map.addLayer({
-        id: 'dams-labels',
-        type: 'symbol',
-        source: 'dams',
-        layout: {
-          'text-field': ['get', 'name'],
-          'text-size': 10,
-          'text-offset': [0, 1.5],
-          'text-anchor': 'top',
-          'text-allow-overlap': false,
-        },
-        paint: {
-          'text-color': '#1e293b',
-          'text-halo-color': '#ffffff',
-          'text-halo-width': 1.5,
-        },
-      });
-
-      // Click handler for dams
-      map.on('click', 'dams-dots', (e) => {
-        if (!e.features?.length) return;
-        const props = e.features[0].properties!;
-        const dam = INDIA_DAMS.find(d => d.id === props.id);
-        if (dam) {
-          setSelectedDam(dam);
-          e.preventDefault();
-        }
-      });
-
-      // Cursor change on hover
-      map.on('mouseenter', 'dams-dots', () => {
-        map.getCanvas().style.cursor = 'pointer';
-      });
-      map.on('mouseleave', 'dams-dots', () => {
-        map.getCanvas().style.cursor = '';
-      });
-    });
-
-    mapRef.current = map;
-
-    return () => {
-      map.remove();
-      mapRef.current = null;
-    };
+        GEOLIBRE_URL,
+      );
+    } catch (err) {
+      console.warn('flyTo postMessage failed:', err);
+    }
   }, []);
 
-  // Fly to dam when selected
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !selectedDam) return;
+  const handleDamClick = useCallback((dam: DamPoint) => {
+    setSelectedDam(dam);
+    flyToDam(dam);
+  }, [flyToDam]);
 
-    map.flyTo({
-      center: [selectedDam.lon, selectedDam.lat],
-      zoom: 11,
-      pitch: 50,
-      bearing: Math.random() * 30 - 15,
-      duration: 2000,
-      essential: true,
-    });
-  }, [selectedDam]);
+  // Check if GeoLibre is running
+  const [geolibreOnline, setGeolibreOnline] = useState(true);
+  useEffect(() => {
+    fetch(GEOLIBRE_URL, { mode: 'no-cors' }).catch(() => setGeolibreOnline(false));
+  }, []);
 
   const hazard = selectedDam ? classifyHazard(selectedDam) : null;
 
@@ -216,9 +101,12 @@ export default function IncidentConsole() {
 
   return (
     <div className="flex h-full w-full relative overflow-hidden">
-      {/* Dam sidebar */}
+      {/* Dam sidebar (overlays on top of GeoLibre) */}
       {sidebarOpen && (
-        <div className="w-72 bg-white border-r border-slate-200 flex flex-col shrink-0 z-10">
+        <div
+          className="w-72 bg-white/95 backdrop-blur-sm border-r border-slate-200 flex flex-col shrink-0 z-10 shadow-lg"
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="p-4 border-b border-slate-100">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
@@ -230,7 +118,7 @@ export default function IncidentConsole() {
               </button>
             </div>
             <p className="text-xs text-slate-500 mb-3">
-              {INDIA_DAMS.length} dams on the 3D globe
+              {INDIA_DAMS.length} dams. Click to fly in GeoLibre.
             </p>
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
@@ -267,7 +155,7 @@ export default function IncidentConsole() {
             {filteredDams.map((dam) => (
               <button
                 key={dam.id}
-                onClick={() => setSelectedDam(dam)}
+                onClick={() => handleDamClick(dam)}
                 className={`w-full flex items-center gap-2 text-left p-2 rounded-lg transition-colors group mb-0.5 ${
                   selectedDam?.id === dam.id ? 'bg-blue-50 border border-blue-200' : 'hover:bg-slate-50'
                 }`}
@@ -284,7 +172,7 @@ export default function IncidentConsole() {
         </div>
       )}
 
-      {/* Map area */}
+      {/* GeoLibre iframe — the real 3D earth */}
       <div className="flex-1 relative">
         {/* Sidebar toggle when collapsed */}
         {!sidebarOpen && (
@@ -297,33 +185,41 @@ export default function IncidentConsole() {
           </button>
         )}
 
-        {/* The actual 3D globe map */}
-        <div ref={mapContainer} className="w-full h-full" />
-
-        {/* Map legend */}
-        <div className="absolute bottom-4 left-3 z-10 bg-white/95 backdrop-blur-sm rounded-lg shadow-md p-3 text-xs">
-          <p className="font-semibold text-slate-700 mb-2">Dam Hazard Level</p>
-          {[
-            { label: 'EXTREME', color: '#dc2626' },
-            { label: 'HIGH', color: '#ea580c' },
-            { label: 'MODERATE', color: '#ca8a04' },
-            { label: 'LOW', color: '#16a34a' },
-          ].map(({ label, color }) => (
-            <div key={label} className="flex items-center gap-2 mb-1">
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
-              <span className="text-slate-600">{label}</span>
+        {!geolibreOnline && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-100/90">
+            <div className="text-center p-6 bg-white rounded-xl shadow-lg max-w-sm">
+              <Globe className="w-10 h-10 text-blue-500 mx-auto mb-3" />
+              <p className="text-sm font-bold text-slate-800 mb-1">GeoLibre Not Running</p>
+              <p className="text-xs text-slate-500 mb-3">Start GeoLibre first to see the 3D earth:</p>
+              <code className="text-[10px] bg-slate-100 px-3 py-1.5 rounded-lg text-slate-700 block">
+                cd GeoLibre-main/apps/geolibre-desktop && npm run dev
+              </code>
+              <button
+                onClick={() => { setGeolibreOnline(true); }}
+                className="mt-3 px-4 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700"
+              >
+                Retry Connection
+              </button>
             </div>
-          ))}
-          <div className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-100">
-            <div className="w-3 h-3 rounded-full bg-blue-500" />
-            <span className="text-slate-600">Selected Dam</span>
           </div>
-        </div>
+        )}
+
+        <iframe
+          ref={iframeRef}
+          src={GEOLIBRE_URL}
+          className="w-full h-full border-0"
+          style={{ minHeight: 'calc(100vh - 3.5rem)' }}
+          allow="accelerometer; camera; geolocation; clipboard-write"
+          title="GeoLibre 3D Earth"
+        />
       </div>
 
-      {/* Dam data panel (slides in when dam is selected) */}
+      {/* Dam data panel (slides in from right) */}
       {selectedDam && (
-        <div className="absolute right-0 top-0 bottom-0 w-80 bg-white border-l border-slate-200 shadow-xl z-20 flex flex-col">
+        <div
+          className="absolute right-0 top-0 bottom-0 w-80 bg-white/95 backdrop-blur-sm border-l border-slate-200 shadow-xl z-20 flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="p-4 overflow-y-auto flex-1">
             <div className="flex items-start justify-between mb-3">
               <div>
@@ -381,6 +277,13 @@ export default function IncidentConsole() {
                 <p className="text-xs text-slate-500 mt-2">{hazard.description}</p>
               </div>
             )}
+
+            <div className="border-t border-slate-100 pt-3 mt-3">
+              <button onClick={() => flyToDam(selectedDam)}
+                className="w-full px-3 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">
+                Fly to Dam in GeoLibre
+              </button>
+            </div>
           </div>
         </div>
       )}
