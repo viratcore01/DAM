@@ -12,7 +12,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { X, Users, Droplets, AlertTriangle, PanelLeftClose, PanelLeft, Globe, Search } from 'lucide-react';
 import { INDIA_DAMS, DamPoint } from '../../data/india-dams';
 
-const GEOLIBRE_URL = 'http://localhost:5175';
+const GEOLIBRE_URL = 'http://localhost:5175/?embed=1';
 
 function classifyHazard(dam: DamPoint) {
   const heightScore = Math.min(dam.height_m / 300, 1);
@@ -166,15 +166,39 @@ export default function IncidentConsole() {
     return () => clearInterval(interval);
   }, []);
 
+  // Queue messages until GeoLibre iframe is ready
+  const pendingMessages = useRef<Array<{ msg: object; target: string }>>([]);
+  const geolibreReady = useRef(false);
+
+  // Listen for 'ready' event from GeoLibre
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === 'ready' && event.data?.source === 'geolibre-embed') {
+        geolibreReady.current = true;
+        // Flush queued messages
+        for (const { msg, target } of pendingMessages.current) {
+          iframeRef.current?.contentWindow?.postMessage(msg, target);
+        }
+        pendingMessages.current = [];
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
   const flyToDam = useCallback((dam: DamPoint) => {
     if (!iframeRef.current?.contentWindow) return;
-    try {
-      iframeRef.current.contentWindow.postMessage(
-        { v: 1, type: 'setView', payload: { center: [dam.lon, dam.lat], zoom: 12 }, requestId: `dam-${dam.id}-${Date.now()}` },
-        GEOLIBRE_URL,
-      );
-    } catch (err) {
-      console.warn('flyTo postMessage failed:', err);
+    const msg = {
+      v: 1,
+      type: 'setView',
+      payload: { center: [dam.lon, dam.lat], zoom: 12 },
+      requestId: `dam-${dam.id}-${Date.now()}`,
+    };
+    const target = GEOLIBRE_URL.replace(/\?.*/, ''); // target origin (no query params)
+    if (geolibreReady.current) {
+      iframeRef.current.contentWindow.postMessage(msg, target);
+    } else {
+      pendingMessages.current.push({ msg, target });
     }
   }, []);
 
