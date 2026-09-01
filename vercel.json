@@ -1,0 +1,9 @@
+{
+  "buildCommand": "cd damsafe-twin/frontend && npm install && npm run build",
+  "outputDirectory": "damsafe-twin/frontend/dist",
+  "installCommand": "cd damsafe-twin/frontend && npm install",
+  "framework": null,
+  "rewrites": [
+    { "source": "/((?!assets/).*)", "destination": "/index.html" }
+  ]
+}
