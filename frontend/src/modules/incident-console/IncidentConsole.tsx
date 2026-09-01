@@ -58,7 +58,7 @@ function formatType(type: string) {
   return map[type] || type;
 }
 
-// ── Inline MapLibre fallback ────────────────────────────────────────
+// ── Inline MapLibre fallback (with 3D terrain) ──────────────────────
 function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint) => void; selectedDam: DamPoint | null }) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
@@ -69,31 +69,161 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
     import('maplibre-gl').then(({ default: maplibregl }) => {
       import('maplibre-gl/dist/maplibre-gl.css');
 
+      // ── OSM raster basemap ────────────────────────────────────────
+      const style: any = {
+        version: 8,
+        name: 'DamSafe 3D Globe',
+        sources: {
+          osm: {
+            type: 'raster',
+            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tileSize: 256,
+            attribution: '© OpenStreetMap',
+          },
+          // ── Real DEM terrain tiles (Terrarium encoding, free, no API key) ──
+          'terrain-dem': {
+            type: 'raster-dem',
+            tiles: [
+              'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
+            ],
+            tileSize: 256,
+            maxzoom: 14,
+            encoding: 'terrarium',
+          },
+          // ── Hillshade source ──────────────────────────────────────
+          hillshade: {
+            type: 'raster-dem',
+            tiles: [
+              'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
+            ],
+            tileSize: 256,
+            maxzoom: 14,
+            encoding: 'terrarium',
+          },
+        },
+        layers: [
+          { id: 'osm-tiles', type: 'raster', source: 'osm' },
+          {
+            id: 'hillshade-layer',
+            type: 'hillshade',
+            source: 'hillshade',
+            paint: {
+              'hillshade-exaggeration': 0.5,
+              'hillshade-shadow-color': '#4a3f6b',
+              'hillshade-highlight-color': '#ffe4b5',
+              'hillshade-accent-color': '#46b1c4',
+            },
+          },
+        ],
+        // ── Atmosphere / fog for depth ──────────────────────────────
+        fog: {
+          range: [0.5, 10],
+          color: 'rgba(186, 210, 235, 0.65)',
+          'high-color': 'rgba(36, 92, 223, 0.35)',
+          'horizon-blend': 0.1,
+          'space-color': 'rgb(11, 11, 25)',
+          'star-intensity': 0.6,
+        },
+      };
+
       const map = new maplibregl.Map({
         container: mapContainer.current!,
-        style: {
-          version: 8, name: 'DamSafe Globe',
-          sources: { osm: { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© OpenStreetMap' } },
-          layers: [{ id: 'osm-tiles', type: 'raster', source: 'osm' }],
-        },
-        center: [78.9, 20.6], zoom: 4.5, pitch: 45, maxPitch: 60,
+        style,
+        center: [78.9, 20.6],
+        zoom: 4.5,
+        pitch: 60,
+        bearing: -17,
+        maxPitch: 70,
+        antialias: true,
       });
 
-      map.addControl(new maplibregl.NavigationControl(), 'top-right');
+      map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
       map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
+      map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
       map.on('load', () => {
+        // ── 3D Terrain: attach DEM source ──────────────────────────
+        map.setTerrain({ source: 'terrain-dem', exaggeration: 1.5 });
+
+        // ── 3D Buildings from OpenMapTiles (fill-extrusion) ─────────
+        // Try to add building extrusions if a vector source with building data is available.
+        // For OSM raster basemap we don't have vector buildings, so we skip that.
+        // If a vector tile source is added later, uncomment:
+        /*
+        map.addLayer({
+          id: '3d-buildings',
+          source: 'openmaptiles',
+          'source-layer': 'building',
+          type: 'fill-extrusion',
+          minzoom: 13,
+          paint: {
+            'fill-extrusion-color': [
+              'interpolate', ['linear'], ['get', 'render_height'],
+              0, '#7fcdbb', 50, '#41b6c4', 100, '#1d91c0', 200, '#225ea8', 500, '#0c2c84'
+            ],
+            'fill-extrusion-height': ['get', 'render_height'],
+            'fill-extrusion-base': ['get', 'render_min_height'],
+            'fill-extrusion-opacity': 0.7,
+          },
+        });
+        */
+
+        // ── Dam markers ────────────────────────────────────────────
         const features = INDIA_DAMS.map((dam) => ({
           type: 'Feature' as const,
           geometry: { type: 'Point' as const, coordinates: [dam.lon, dam.lat] },
-          properties: { id: dam.id, name: dam.name, state: dam.state, river: dam.river, height_m: dam.height_m, capacity_mcm: dam.capacity_mcm, type: dam.type, year_built: dam.year_built, hazard_color: classifyHazard(dam).color },
+          properties: {
+            id: dam.id, name: dam.name, state: dam.state, river: dam.river,
+            height_m: dam.height_m, capacity_mcm: dam.capacity_mcm,
+            type: dam.type, year_built: dam.year_built,
+            hazard_color: classifyHazard(dam).color,
+          },
         }));
 
         map.addSource('dams', { type: 'geojson', data: { type: 'FeatureCollection', features } });
-        map.addLayer({ id: 'dams-glow', type: 'circle', source: 'dams', paint: { 'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 6, 300, 18], 'circle-color': ['get', 'hazard_color'], 'circle-opacity': 0.25, 'circle-blur': 1 } });
-        map.addLayer({ id: 'dams-dots', type: 'circle', source: 'dams', paint: { 'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 3, 300, 9], 'circle-color': ['get', 'hazard_color'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5, 'circle-opacity': 0.9 } });
-        map.addLayer({ id: 'dams-labels', type: 'symbol', source: 'dams', layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': [0, 1.5], 'text-anchor': 'top', 'text-allow-overlap': false }, paint: { 'text-color': '#1e293b', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } });
 
+        // Glow halo behind each dam dot
+        map.addLayer({
+          id: 'dams-glow', type: 'circle', source: 'dams',
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 8, 300, 22],
+            'circle-color': ['get', 'hazard_color'],
+            'circle-opacity': 0.2,
+            'circle-blur': 2,
+          },
+        });
+
+        // Solid dam dot
+        map.addLayer({
+          id: 'dams-dots', type: 'circle', source: 'dams',
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 4, 300, 12],
+            'circle-color': ['get', 'hazard_color'],
+            'circle-stroke-color': '#fff',
+            'circle-stroke-width': 2,
+            'circle-opacity': 0.95,
+          },
+        });
+
+        // Dam name labels (only on zoom)
+        map.addLayer({
+          id: 'dams-labels', type: 'symbol', source: 'dams',
+          layout: {
+            'text-field': ['get', 'name'],
+            'text-size': 11,
+            'text-offset': [0, 1.8],
+            'text-anchor': 'top',
+            'text-allow-overlap': false,
+            'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+          },
+          paint: {
+            'text-color': '#1e293b',
+            'text-halo-color': 'rgba(255,255,255,0.85)',
+            'text-halo-width': 2,
+          },
+        });
+
+        // ── Click handler ──────────────────────────────────────────
         map.on('click', 'dams-dots', (e: any) => {
           if (!e.features?.length) return;
           const dam = INDIA_DAMS.find(d => d.id === e.features[0].properties.id);
@@ -112,7 +242,15 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
 
   useEffect(() => {
     if (!mapRef.current || !selectedDam) return;
-    mapRef.current.flyTo({ center: [selectedDam.lon, selectedDam.lat], zoom: 11, pitch: 50, bearing: Math.random() * 30 - 15, duration: 2000 });
+    // Fly to dam with 3D terrain perspective — tilt, rotate, and zoom in
+    mapRef.current.flyTo({
+      center: [selectedDam.lon, selectedDam.lat],
+      zoom: 13,
+      pitch: 60,
+      bearing: Math.random() * 40 - 20,
+      duration: 2500,
+      essential: true,
+    });
   }, [selectedDam]);
 
   return <div ref={mapContainer} className="w-full h-full" />;
