@@ -100,7 +100,8 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return;
 
-    import('maplibre-gl').then(({ default: maplibregl }) => {
+    import('maplibre-gl').then((maplibregl) => {
+      const mgl = (maplibregl as any).Map ? maplibregl : (maplibregl as any).default || maplibregl;
       // @ts-ignore — CSS side-effect import not typed
       import('maplibre-gl/dist/maplibre-gl.css').catch(() => {});
 
@@ -135,17 +136,10 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
         layers: [
           { id: 'satellite', type: 'raster', source: 'satellite' },
         ],
-        fog: {
-          range: [0.5, 10],
-          color: 'rgba(186, 210, 235, 0.6)',
-          'high-color': 'rgba(36, 92, 223, 0.3)',
-          'horizon-blend': 0.1,
-          'space-color': 'rgb(11, 11, 25)',
-          'star-intensity': 0.6,
-        },
+
       };
 
-      const map = new maplibregl.Map({
+      const map = new (mgl.Map || mgl)({
         container: mapContainer.current!,
         style,
         center: [78.9, 20.6],
@@ -159,9 +153,9 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
 
 
 
-      map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
-      map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
-      map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');        map.on('load', () => {
+      map.addControl(new mgl.NavigationControl({ visualizePitch: true }), 'top-right');
+      map.addControl(new mgl.ScaleControl(), 'bottom-left');
+      map.addControl(new mgl.AttributionControl({ compact: true }), 'bottom-right');        map.on('load', () => {
         // ── 3D Globe projection + terrain ──────────────────────────
         map.setProjection({ type: 'globe' });
         map.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
@@ -193,17 +187,6 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
           type: 'raster',
           source: 'labels',
           paint: { 'raster-opacity': 0.85 },
-        });
-
-        // ── Sky / atmosphere (globe view) ─────────────────────────
-        map.addLayer({
-          id: 'sky',
-          type: 'sky',
-          paint: {
-            'sky-type': 'atmosphere',
-            'sky-atmosphere-sun': [0.0, 90.0],
-            'sky-atmosphere-sun-intensity': 15,
-          },
         });
 
         // ── Dam markers ────────────────────────────────────────────
