@@ -155,10 +155,30 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
 
       map.addControl(new mgl.NavigationControl({ visualizePitch: true }), 'top-right');
       map.addControl(new mgl.ScaleControl(), 'bottom-left');
-      map.addControl(new mgl.AttributionControl({ compact: true }), 'bottom-right');        map.on('load', () => {
+      map.addControl(new mgl.AttributionControl({ compact: true }), 'bottom-right');
+
+      // ── Dynamic projection switcher ──────────────────────────────
+      map.on('zoom', () => {
+        const zoom = map.getZoom();
+        if (zoom > 5) {
+          map.setProjection({ type: 'mercator' });
+        } else {
+          map.setProjection({ type: 'globe' });
+        }
+      });        map.on('load', () => {
         // ── 3D Globe projection + terrain ──────────────────────────
         map.setProjection({ type: 'globe' });
         map.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
+
+        // ── Sky horizon layer ─────────────────────────────────────
+        map.setSky({
+          'sky-color': '#199EF3',
+          'sky-horizon-blend': 0.5,
+          'horizon-color': '#ffffff',
+          'horizon-fog-blend': 0.5,
+          'fog-color': '#000000',
+          'fog-ground-blend': 0.5,
+        });
 
         // ── Hillshade layer using the same DEM source ──────────────
         map.addLayer({
@@ -297,14 +317,15 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
     return () => { mapRef.current?.remove(); mapRef.current = null; };
   }, []);
 
-  // ── Fly to selected dam (exact coordinates on globe) ───────────
+  // ── Fly to selected dam (force Mercator for 3D terrain) ──────
   useEffect(() => {
     if (!mapRef.current || !selectedDam) return;
+    mapRef.current.setProjection({ type: 'mercator' });
     mapRef.current.flyTo({
       center: [selectedDam.lon, selectedDam.lat],
-      zoom: 12,
-      pitch: 45,
-      bearing: -17,
+      zoom: 13.5,
+      pitch: 65,
+      bearing: 30,
       duration: 2500,
       essential: true,
     });
@@ -440,15 +461,16 @@ export default function IncidentConsole() {
     return () => window.removeEventListener('message', handler);
   }, []);
 
-  // Fly to exact dam location on the globe
+  // Fly to exact dam location (force Mercator for 3D terrain)
   const flyToDam = useCallback((dam: DamPoint) => {
-    // 1) Fly inline MapLibre map to exact coordinates
+    // 1) Switch to Mercator + fly to exact coordinates
     if (mapRef.current) {
+      mapRef.current.setProjection({ type: 'mercator' });
       mapRef.current.flyTo({
         center: [dam.lon, dam.lat],
-        zoom: 12,
-        pitch: 45,
-        bearing: -17,
+        zoom: 13.5,
+        pitch: 65,
+        bearing: 30,
         duration: 2500,
         essential: true,
       });
@@ -459,7 +481,7 @@ export default function IncidentConsole() {
       const msg = {
         v: 1,
         type: 'setView',
-        payload: { center: [dam.lon, dam.lat], zoom: 10, duration: 2500 },
+        payload: { center: [dam.lon, dam.lat], zoom: 13.5, duration: 2500 },
         requestId: `dam-${dam.id}-${Date.now()}`,
       };
       const target = GEOLIBRE_BASE;
