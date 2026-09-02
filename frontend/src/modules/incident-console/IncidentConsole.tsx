@@ -121,13 +121,14 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
             maxzoom: 18,
           },
           // Terrain DEM — Terrarium encoding from AWS elevation-tiles
+          // CRITICAL: encoding='terrarium' prevents zigzag spikes & deformed landmarks
           'terrain-dem': {
             type: 'raster-dem',
             tiles: [
               'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
             ],
             tileSize: 256,
-            maxzoom: 12,
+            maxzoom: 14,
             encoding: 'terrarium',
           },
         },
@@ -151,9 +152,9 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
         zoom: 4.5,
         pitch: 60,
         bearing: -17,
-        maxPitch: 70,
+        maxPitch: 75,
+        fadeDuration: 0,
         antialias: true,
-
       });
 
       map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
@@ -162,11 +163,7 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
 
       map.on('load', () => {
         // ── 3D Terrain (source already in style, just enable it) ───
-        const terrainSource = map.getSource('terrain-dem');
-        console.log('[DamSafe] Terrain source exists:', !!terrainSource);
-        map.setTerrain({ source: 'terrain-dem', exaggeration: 2.5 });
-        const terrainState = map.getTerrain();
-        console.log('[DamSafe] Terrain state:', JSON.stringify(terrainState));
+        map.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
 
         // ── Hillshade layer using the same DEM source ──────────────
         map.addLayer({
@@ -213,7 +210,7 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
 
         map.addSource('dams', { type: 'geojson', data: { type: 'FeatureCollection', features } });
 
-        // Glow halo
+        // Glow halo — clamped to terrain surface
         map.addLayer({
           id: 'dams-glow', type: 'circle', source: 'dams',
           paint: {
@@ -221,10 +218,12 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
             'circle-color': ['get', 'hazard_color'],
             'circle-opacity': 0.25,
             'circle-blur': 2,
+            'circle-pitch-alignment': 'map',
+            'circle-pitch-scale': 'map',
           },
         });
 
-        // Solid dot
+        // Solid dot — clamped to terrain surface
         map.addLayer({
           id: 'dams-dots', type: 'circle', source: 'dams',
           paint: {
@@ -233,10 +232,12 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
             'circle-stroke-color': '#fff',
             'circle-stroke-width': 2,
             'circle-opacity': 0.95,
+            'circle-pitch-alignment': 'map',
+            'circle-pitch-scale': 'map',
           },
         });
 
-        // Labels (use symbol layer with a simple text approach)
+        // Labels — clamped to terrain surface
         map.addLayer({
           id: 'dams-labels', type: 'symbol', source: 'dams',
           layout: {
@@ -245,6 +246,7 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
             'text-offset': [0, 1.8],
             'text-anchor': 'top',
             'text-allow-overlap': false,
+            'text-pitch-alignment': 'map',
           },
           paint: {
             'text-color': '#fff',
@@ -288,47 +290,23 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
           attribution: '© OpenFreeMap contributors',
         });
 
-        // 3D building extrusions — visible from zoom 11+
+        // 3D building extrusions — deferred to zoom 14.5 for performance
         map.addLayer({
           id: '3d-buildings',
           source: 'openmaptiles',
           'source-layer': 'building',
           type: 'fill-extrusion',
-          minzoom: 11,
+          minzoom: 14.5,
           paint: {
-            'fill-extrusion-color': [
-              'interpolate', ['linear'],
-              ['coalesce', ['get', 'render_height'], ['get', 'height'], 8],
-              0, '#b8c9d4',
-              8, '#9ab0c0',
-              20, '#7d97ab',
-              50, '#607d90',
-              100, '#4a6578',
-              200, '#344e60',
-            ],
+            'fill-extrusion-color': '#d1d5db',
             'fill-extrusion-height': [
-              'interpolate', ['linear'], ['zoom'],
-              11, [
-                'coalesce',
-                ['get', 'render_height'],
-                ['get', 'height'],
-                ['*', 4, ['coalesce', ['get', 'render_min_height'], 1]],
-              ],
-              16, [
-                'coalesce',
-                ['get', 'render_height'],
-                ['get', 'height'],
-                12,
-              ],
+              'coalesce', ['get', 'render_height'], ['get', 'height'], 10,
             ],
             'fill-extrusion-base': [
               'coalesce', ['get', 'render_min_height'], ['get', 'min_height'], 0,
             ],
-            'fill-extrusion-opacity': [
-              'interpolate', ['linear'], ['zoom'],
-              11, 0.4,
-              14, 0.7,
-            ],
+            'fill-extrusion-opacity': 0.8,
+            'fill-extrusion-vertical-gradient': true,
           },
         });
 
