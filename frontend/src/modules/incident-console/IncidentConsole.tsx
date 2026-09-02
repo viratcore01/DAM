@@ -104,10 +104,11 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
       // @ts-ignore — CSS side-effect import not typed
       import('maplibre-gl/dist/maplibre-gl.css').catch(() => {});
 
-      // ── Map style: satellite + terrain + labels ──────────────────
+      // ── Map style: satellite + terrain DEM (must be in style!) ──
       const style: any = {
         version: 8,
         name: 'DamSafe Satellite 3D',
+        glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
         sources: {
           // Esri World Imagery — high-res satellite basemap
           satellite: {
@@ -119,52 +120,19 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
             attribution: '© Esri, Maxar, Earthstar Geographics',
             maxzoom: 18,
           },
-          // Esri labels — place names, roads, borders on top of satellite
-          labels: {
-            type: 'raster',
-            tiles: [
-              'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-            ],
-            tileSize: 256,
-            attribution: '© Esri',
-            maxzoom: 18,
-          },
-          // Real DEM terrain tiles (Terrarium encoding)
+          // Terrain DEM — Terrarium encoding from AWS elevation-tiles
           'terrain-dem': {
             type: 'raster-dem',
             tiles: [
               'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
             ],
             tileSize: 256,
-            maxzoom: 14,
-            encoding: 'terrarium',
-          },
-          // Hillshade from DEM
-          hillshade: {
-            type: 'raster-dem',
-            tiles: [
-              'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
-            ],
-            tileSize: 256,
-            maxzoom: 14,
+            maxzoom: 12,
             encoding: 'terrarium',
           },
         },
         layers: [
-          // Layer 0: Satellite imagery base
           { id: 'satellite', type: 'raster', source: 'satellite' },
-          // Layer 1: Hillshade for terrain depth
-          {
-            id: 'hillshade-layer',
-            type: 'hillshade',
-            source: 'hillshade',
-            paint: {
-              'hillshade-exaggeration': 0.6,
-              'hillshade-shadow-color': '#2a1f4b',
-              'hillshade-highlight-color': '#ffe8c8',
-              'hillshade-accent-color': '#3a8fb7',
-            },
-          },
         ],
         fog: {
           range: [0.5, 10],
@@ -185,6 +153,7 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
         bearing: -17,
         maxPitch: 70,
         antialias: true,
+
       });
 
       map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
@@ -192,8 +161,25 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
       map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
       map.on('load', () => {
-        // ── 3D Terrain ─────────────────────────────────────────────
-        map.setTerrain({ source: 'terrain-dem', exaggeration: 1.5 });
+        // ── 3D Terrain (source already in style, just enable it) ───
+        const terrainSource = map.getSource('terrain-dem');
+        console.log('[DamSafe] Terrain source exists:', !!terrainSource);
+        map.setTerrain({ source: 'terrain-dem', exaggeration: 2.5 });
+        const terrainState = map.getTerrain();
+        console.log('[DamSafe] Terrain state:', JSON.stringify(terrainState));
+
+        // ── Hillshade layer using the same DEM source ──────────────
+        map.addLayer({
+          id: 'hillshade-layer',
+          type: 'hillshade',
+          source: 'terrain-dem',
+          paint: {
+            'hillshade-exaggeration': 0.8,
+            'hillshade-shadow-color': '#1a1040',
+            'hillshade-highlight-color': '#ffe8c8',
+            'hillshade-accent-color': '#2a6fa7',
+          },
+        }, 'satellite');
 
         // ── Labels layer on top (togglable) ────────────────────────
         map.addSource('labels', {
@@ -210,6 +196,8 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
           source: 'labels',
           paint: { 'raster-opacity': 0.85 },
         });
+
+
 
         // ── Dam markers ────────────────────────────────────────────
         const features = INDIA_DAMS.map((dam) => ({
@@ -248,11 +236,11 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
           },
         });
 
-        // Labels
+        // Labels (use symbol layer with a simple text approach)
         map.addLayer({
           id: 'dams-labels', type: 'symbol', source: 'dams',
           layout: {
-            'text-field': ['get', 'name'],
+            'text-field': ['to-string', ['get', 'name']],
             'text-size': 11,
             'text-offset': [0, 1.8],
             'text-anchor': 'top',
