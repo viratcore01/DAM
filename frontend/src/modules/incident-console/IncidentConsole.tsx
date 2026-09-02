@@ -294,142 +294,6 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
     return () => { mapRef.current?.remove(); mapRef.current = null; };
   }, []);
 
-  // Fly to selected dam (switch to Mercator for close-up, back to Globe on deselect)
-  useEffect(() => {
-    if (!mapRef.current) return;
-    if (!selectedDam) {
-      // Deselect — switch back to Globe
-      try {
-        mapRef.current.setProjection({ type: 'globe' });
-        mapRef.current.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
-        if (mapRef.current.getLayer('hillshade-layer')) {
-          mapRef.current.setLayoutProperty('hillshade-layer', 'visibility', 'visible');
-        }
-        // Remove buildings if present
-        if (mapRef.current.getLayer('3d-buildings')) {
-          mapRef.current.removeLayer('3d-buildings');
-        }
-        if (mapRef.current.getSource('maptiler-buildings')) {
-          mapRef.current.removeSource('maptiler-buildings');
-        }
-        mapRef.current.flyTo({ center: [78.9, 20.6], zoom: 2, pitch: 45, bearing: -17, duration: 2000 });
-      } catch (e) { console.warn('Deselect flyback failed:', e); }
-      return;
-    }
-    // Switch to Mercator for the fly-to zoom
-    try {
-      mapRef.current.setProjection({ type: 'mercator' });
-    } catch {}
-    setTimeout(() => {
-      mapRef.current?.flyTo({
-        center: [selectedDam.lon, selectedDam.lat],
-        zoom: 13.5,
-        pitch: 65,
-        bearing: 30,
-        duration: 3000,
-        essential: true,
-      });
-    }, 300);
-  }, [selectedDam]);
-
-  // ── Toggle labels ─────────────────────────────────────────────────
-  // ── Toggle buildings vs terrain ───────────────────────────────────
-  useEffect(() => {
-    if (!mapRef.current?.isStyleLoaded()) return;
-    try {
-      if (showBuildings) {
-        // Switch to Mercator for buildings (fill-extrusion needs Mercator)
-        mapRef.current.setProjection({ type: 'mercator' });
-        mapRef.current.setTerrain(null);
-        // Hide hillshade
-        if (mapRef.current.getLayer('hillshade-layer')) {
-          mapRef.current.setLayoutProperty('hillshade-layer', 'visibility', 'none');
-        }
-        // Add buildings layer if not present
-        // Add MapTiler source if not present
-        if (!mapRef.current.getSource('maptiler-buildings')) {
-          mapRef.current.addSource('maptiler-buildings', {
-            type: 'vector',
-            url: 'https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ',
-          });
-        }
-        if (!mapRef.current.getLayer('3d-buildings')) {
-          mapRef.current.addLayer({
-            id: '3d-buildings',
-            type: 'fill-extrusion',
-            source: 'maptiler-buildings',
-            'source-layer': 'building',
-            minzoom: 12,
-            paint: {
-              'fill-extrusion-color': '#e0e7ff',
-              'fill-extrusion-height': ['case', ['has', 'render_height'], ['get', 'render_height'], ['has', 'height'], ['get', 'height'], 15],
-              'fill-extrusion-base': ['case', ['has', 'render_min_height'], ['get', 'render_min_height'], ['has', 'min_height'], ['get', 'min_height'], 0],
-              'fill-extrusion-opacity': 0.75,
-              'fill-extrusion-vertical-gradient': true,
-            },
-          });
-        }
-      } else {
-        // Remove buildings
-        if (mapRef.current.getLayer('3d-buildings')) {
-          mapRef.current.removeLayer('3d-buildings');
-        }
-        if (mapRef.current.getSource('maptiler-buildings')) {
-          mapRef.current.removeSource('maptiler-buildings');
-        }
-        // Switch back to globe
-        mapRef.current.setProjection({ type: 'globe' });
-        mapRef.current.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
-        // Show hillshade
-        if (mapRef.current.getLayer('hillshade-layer')) {
-          mapRef.current.setLayoutProperty('hillshade-layer', 'visibility', 'visible');
-        }
-      }
-    } catch (e) { console.warn('Toggle failed:', e); }
-  }, [showBuildings]);
-
-  // ── Toggle labels layer visibility ──────────────────────────────
-  useEffect(() => {
-    if (!mapRef.current?.isStyleLoaded()) return;
-    try {
-      if (mapRef.current.getLayer('labels-layer')) {
-        mapRef.current.setLayoutProperty('labels-layer', 'visibility', showLabels ? 'visible' : 'none');
-      }
-    } catch (e) { console.warn('Labels toggle failed:', e); }
-  }, [showLabels]);
-
-
-  // ── Update flood overlay ──────────────────────────────────────────
-  useEffect(() => {
-    if (!mapRef.current?.isStyleLoaded() || !showFlood) return;
-    const dam = selectedDam || INDIA_DAMS[0]; // default to first dam for demo
-    if (floodProgress === 0) {
-      mapRef.current.getSource('flood-extent')?.setData({
-        type: 'FeatureCollection', features: [],
-      });
-    } else {
-      const flood = generateFloodPolygon(dam, floodProgress);
-      mapRef.current.getSource('flood-extent')?.setData({
-        type: 'FeatureCollection', features: [flood],
-      });
-    }
-  }, [floodProgress, showFlood, selectedDam]);
-
-  // ── Flood animation playback ──────────────────────────────────────
-  useEffect(() => {
-    if (floodPlaying) {
-      floodIntervalRef.current = setInterval(() => {
-        setFloodProgress(prev => {
-          if (prev >= 1) { setFloodPlaying(false); return 1; }
-          return Math.min(prev + 0.02, 1);
-        });
-      }, 80);
-    } else if (floodIntervalRef.current) {
-      clearInterval(floodIntervalRef.current);
-    }
-    return () => { if (floodIntervalRef.current) clearInterval(floodIntervalRef.current); };
-  }, [floodPlaying]);
-
   return (
     <div className="relative w-full h-full">
       <div ref={mapContainer} className="w-full h-full" />
@@ -437,21 +301,21 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
       {/* ── Map controls overlay ───────────────────────────────────── */}
       <div className="absolute top-3 right-14 z-20 flex flex-col gap-2">
         {/* Labels toggle */}
-        <button onClick={() => setShowLabels(!showLabels)}
+        <button onClick={() => { const next = !showLabels; setShowLabels(next); const map = mapRef.current; if (map && map.getLayer && map.getLayer("labels-layer")) { map.setLayoutProperty("labels-layer", "visibility", next ? "visible" : "none"); } }}
           className={`p-2 rounded-lg shadow-md transition-colors ${showLabels ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
           title="Toggle place labels">
           <Layers className="w-4 h-4" />
         </button>
 
         {/* Buildings/Terrain toggle */}
-        <button onClick={() => setShowBuildings(!showBuildings)}
+        <button onClick={() => { const next = !showBuildings; setShowBuildings(next); const map = mapRef.current; if (!map) return; try { if (next) { map.setTerrain(null); try { map.setProjection({ type: "mercator" }); } catch {} if (map.getLayer("hillshade-layer")) map.setLayoutProperty("hillshade-layer", "visibility", "none"); if (!map.getSource("maptiler-buildings")) { map.addSource("maptiler-buildings", { type: "vector", url: "https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ" }); } if (!map.getLayer("3d-buildings")) { map.addLayer({ id: "3d-buildings", type: "fill-extrusion", source: "maptiler-buildings", "source-layer": "building", minzoom: 12, paint: { "fill-extrusion-color": "#e0e7ff", "fill-extrusion-height": ["case", ["has", "render_height"], ["get", "render_height"], ["has", "height"], ["get", "height"], 15], "fill-extrusion-base": 0, "fill-extrusion-opacity": 0.75 } }); } } else { if (map.getLayer("3d-buildings")) map.removeLayer("3d-buildings"); if (map.getSource("maptiler-buildings")) map.removeSource("maptiler-buildings"); try { map.setProjection({ type: "globe" }); } catch {} map.setTerrain({ source: "terrain-dem", exaggeration: 1.0 }); if (map.getLayer("hillshade-layer")) map.setLayoutProperty("hillshade-layer", "visibility", "visible"); } } catch (e) { console.warn("Buildings toggle:", e); } }}
           className={`p-2 rounded-lg shadow-md transition-colors ${showBuildings ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
           title={showBuildings ? "Switch to 3D terrain view" : "Switch to 3D buildings view"}>
           {showBuildings ? <Mountain className="w-4 h-4" /> : <Building className="w-4 h-4" />}
         </button>
 
         {/* Flood toggle */}
-        <button onClick={() => { setShowFlood(!showFlood); if (!showFlood) setFloodProgress(0.5); }}
+        <button onClick={() => { console.log("Flood click! current=" + showFlood); setShowFlood(!showFlood); if (!showFlood) setFloodProgress(0.5); }}
           className={`p-2 rounded-lg shadow-md transition-colors ${showFlood ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
           title="Toggle flood extent overlay">
           <Droplets className="w-4 h-4" />
