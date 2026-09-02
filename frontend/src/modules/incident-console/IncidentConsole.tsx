@@ -149,20 +149,21 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
         container: mapContainer.current!,
         style,
         center: [78.9, 20.6],
-        zoom: 4.5,
-        pitch: 60,
+        zoom: 2.5,
+        pitch: 50,
         bearing: -17,
         maxPitch: 75,
         fadeDuration: 0,
         antialias: true,
       });
 
+
+
       map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
       map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
-      map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
-
-      map.on('load', () => {
-        // ── 3D Terrain (source already in style, just enable it) ───
+      map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');        map.on('load', () => {
+        // ── 3D Globe projection + terrain ──────────────────────────
+        map.setProjection({ type: 'globe' });
         map.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
 
         // ── Hillshade layer using the same DEM source ──────────────
@@ -194,7 +195,16 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
           paint: { 'raster-opacity': 0.85 },
         });
 
-
+        // ── Sky / atmosphere (globe view) ─────────────────────────
+        map.addLayer({
+          id: 'sky',
+          type: 'sky',
+          paint: {
+            'sky-type': 'atmosphere',
+            'sky-atmosphere-sun': [0.0, 90.0],
+            'sky-atmosphere-sun-intensity': 15,
+          },
+        });
 
         // ── Dam markers ────────────────────────────────────────────
         const features = INDIA_DAMS.map((dam) => ({
