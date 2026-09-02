@@ -315,48 +315,96 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
     if (!map) return;
     try {
       if (next) {
-        // MUST set terrain to 0 exaggeration (not null!) before fill-extrusion
-        map.setTerrain({ source: 'terrain-dem', exaggeration: 0 });
-        try { map.setProjection({ type: 'mercator' }); } catch {}
-        if (map.getLayer('hillshade-layer')) map.setLayoutProperty('hillshade-layer', 'visibility', 'none');
-        if (map.getLayer('satellite')) map.setLayoutProperty('satellite', 'visibility', 'visible');
-
-        // Remove old layer if exists
-        if (map.getLayer('3d-buildings')) map.removeLayer('3d-buildings');
-        if (map.getSource('maptiler-buildings')) map.removeSource('maptiler-buildings');
-
-        // Add MapTiler vector source
-        map.addSource('maptiler-buildings', {
-          type: 'vector',
-          url: 'https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ',
-        });
-
-        // Add 3D buildings — force at zoom 12+ with aggressive paint
-        map.addLayer({
-          id: '3d-buildings',
-          type: 'fill-extrusion',
-          source: 'maptiler-buildings',
-          'source-layer': 'building',
-          minzoom: 12,
-          paint: {
-            'fill-extrusion-color': '#3498db',
-            'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 10],
-            'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
-            'fill-extrusion-opacity': 1,
+        // Reload entire map style WITHOUT terrain source — fill-extrusion cannot
+        // coexist with setTerrain() in MapLibre v6, even at exaggeration 0
+        map.setStyle({
+          version: 8,
+          name: 'DamSafe Buildings',
+          glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+          sources: {
+            satellite: {
+              type: 'raster',
+              tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+              tileSize: 256,
+              attribution: 'Esri, Maxar, Earthstar Geographics',
+              maxzoom: 18,
+            },
+            'maptiler-buildings': {
+              type: 'vector',
+              url: 'https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ',
+            },
           },
+          layers: [
+            { id: 'satellite', type: 'raster', source: 'satellite' },
+          ],
         });
 
-        // Fly to Mumbai zoom 15 with 65 degree tilt
-        map.flyTo({ center: [72.88, 19.08], zoom: 15, pitch: 65, bearing: -30, duration: 2500 });
-        console.log('Buildings ON: source added, layer added, zooming to Mumbai');
+        // Wait for style to load, then add buildings layer and fly to Mumbai
+        map.once('idle', () => {
+          map.setProjection({ type: 'mercator' });
+          if (!map.getLayer('3d-buildings')) {
+            map.addLayer({
+              id: '3d-buildings',
+              type: 'fill-extrusion',
+              source: 'maptiler-buildings',
+              'source-layer': 'building',
+              minzoom: 13,
+              paint: {
+                'fill-extrusion-color': '#3498db',
+                'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 10],
+                'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
+                'fill-extrusion-opacity': 1,
+              },
+            });
+          }
+          map.flyTo({ center: [72.88, 19.08], zoom: 15.5, pitch: 65, bearing: -30, duration: 2500 });
+          console.log('Buildings ON: fresh style, no terrain, zooming to Mumbai');
+        });
       } else {
-        if (map.getLayer('3d-buildings')) map.removeLayer('3d-buildings');
-        if (map.getSource('maptiler-buildings')) map.removeSource('maptiler-buildings');
-        map.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
-        if (map.getLayer('hillshade-layer')) map.setLayoutProperty('hillshade-layer', 'visibility', 'visible');
-        try { map.setProjection({ type: 'globe' }); } catch {}
-        map.flyTo({ center: [78.9, 20.6], zoom: 2, pitch: 45, bearing: -17, duration: 2000 });
-        console.log('Buildings OFF: back to Globe');
+        // Reload original style WITH terrain
+        map.setStyle({
+          version: 8,
+          name: 'DamSafe Satellite 3D',
+          glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+          sources: {
+            satellite: {
+              type: 'raster',
+              tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+              tileSize: 256,
+              attribution: 'Esri, Maxar, Earthstar Geographics',
+              maxzoom: 18,
+            },
+            'terrain-dem': {
+              type: 'raster-dem',
+              tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+              tileSize: 256,
+              maxzoom: 14,
+              encoding: 'terrarium',
+            },
+          },
+          layers: [{ id: 'satellite', type: 'raster', source: 'satellite' }],
+        });
+        map.once('idle', () => {
+          map.setProjection({ type: 'globe' });
+          map.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
+          map.addLayer({ id: 'hillshade-layer', type: 'hillshade', source: 'terrain-dem', paint: { 'hillshade-exaggeration': 0.8, 'hillshade-shadow-color': '#1a1040', 'hillshade-highlight-color': '#ffe8c8', 'hillshade-accent-color': '#2a6fa7' } }, 'satellite');
+          map.addSource('labels', { type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 18 });
+          map.addLayer({ id: 'labels-layer', type: 'raster', source: 'labels', paint: { 'raster-opacity': 0.85 } });
+          // Re-add dam markers
+          const features = INDIA_DAMS.map((dam) => ({
+            type: 'Feature', geometry: { type: 'Point', coordinates: [dam.lon, dam.lat] },
+            properties: { id: dam.id, name: dam.name, state: dam.state, river: dam.river, height_m: dam.height_m, capacity_mcm: dam.capacity_mcm, type: dam.type, year_built: dam.year_built, hazard_color: classifyHazard(dam).color },
+          }));
+          map.addSource('dams', { type: 'geojson', data: { type: 'FeatureCollection', features } });
+          map.addLayer({ id: 'dams-glow', type: 'circle', source: 'dams', paint: { 'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 8, 300, 22], 'circle-color': ['get', 'hazard_color'], 'circle-opacity': 0.25, 'circle-blur': 2, 'circle-pitch-alignment': 'map', 'circle-pitch-scale': 'map' } });
+          map.addLayer({ id: 'dams-dots', type: 'circle', source: 'dams', paint: { 'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 4, 300, 12], 'circle-color': ['get', 'hazard_color'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 2, 'circle-opacity': 0.95, 'circle-pitch-alignment': 'map', 'circle-pitch-scale': 'map' } });
+          map.addLayer({ id: 'dams-labels', type: 'symbol', source: 'dams', layout: { 'text-field': ['to-string', ['get', 'name']], 'text-size': 11, 'text-offset': [0, 1.8], 'text-anchor': 'top', 'text-allow-overlap': false, 'text-pitch-alignment': 'map' }, paint: { 'text-color': '#fff', 'text-halo-color': 'rgba(0,0,0,0.7)', 'text-halo-width': 2 } });
+          map.addSource('flood-extent', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+          map.addLayer({ id: 'flood-fill', type: 'fill', source: 'flood-extent', paint: { 'fill-color': ['interpolate', ['linear'], ['get', 'progress'], 0, 'rgba(59,130,246,0.1)', 0.3, 'rgba(59,130,246,0.25)', 0.6, 'rgba(37,99,235,0.4)', 1, 'rgba(30,64,175,0.55)'], 'fill-opacity': 0.7 } });
+          map.addLayer({ id: 'flood-outline', type: 'line', source: 'flood-extent', paint: { 'line-color': '#3b82f6', 'line-width': 2, 'line-opacity': 0.8 } });
+          map.flyTo({ center: [78.9, 20.6], zoom: 2, pitch: 45, bearing: -17, duration: 2000 });
+          console.log('Buildings OFF: restored Globe with terrain + all layers');
+        });
       }
     } catch (e) { console.warn('Buildings toggle:', e); }
   }}
