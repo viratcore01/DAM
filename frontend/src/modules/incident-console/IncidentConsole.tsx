@@ -341,6 +341,7 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
 
         // Wait for style to load, then add buildings layer and fly to Mumbai
         map.once('idle', () => {
+          setTimeout(() => {
           map.setProjection({ type: 'mercator' });
           if (!map.getLayer('3d-buildings')) {
             map.addLayer({
@@ -359,8 +360,9 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
           }
           map.flyTo({ center: [72.88, 19.08], zoom: 15.5, pitch: 65, bearing: -30, duration: 2500 });
           console.log('Buildings ON: fresh style, no terrain, zooming to Mumbai');
-        });
-      } else {
+        }, 500);
+      });
+    } else {
         // Reload original style WITH terrain
         map.setStyle({
           version: 8,
