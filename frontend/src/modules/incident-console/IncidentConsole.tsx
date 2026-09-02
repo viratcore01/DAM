@@ -149,8 +149,8 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
         container: mapContainer.current!,
         style,
         center: [78.9, 20.6],
-        zoom: 2.5,
-        pitch: 50,
+        zoom: 1,
+        pitch: 30,
         bearing: -17,
         maxPitch: 75,
         fadeDuration: 0,
@@ -426,15 +426,15 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
     return () => { mapRef.current?.remove(); mapRef.current = null; };
   }, []);
 
-  // ── Fly to selected dam ───────────────────────────────────────────
+  // ── Fly to selected dam (on globe) ──────────────────────────────
   useEffect(() => {
     if (!mapRef.current || !selectedDam) return;
     mapRef.current.flyTo({
       center: [selectedDam.lon, selectedDam.lat],
-      zoom: 13,
-      pitch: 60,
-      bearing: Math.random() * 40 - 20,
-      duration: 2500,
+      zoom: 5,
+      pitch: 30,
+      bearing: -17,
+      duration: 3000,
       essential: true,
     });
   }, [selectedDam]);
