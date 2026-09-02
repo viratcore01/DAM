@@ -13,7 +13,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { X, Users, Droplets, AlertTriangle, PanelLeftClose, PanelLeft, Globe, Search, Layers, Play, Pause, RotateCcw } from 'lucide-react';
+import { X, Users, Droplets, AlertTriangle, PanelLeftClose, PanelLeft, Globe, Search, Layers, Play, Pause, RotateCcw, Building, Mountain } from 'lucide-react';
 import { INDIA_DAMS, DamPoint } from '../../data/india-dams';
 
 const GEOLIBRE_BASE = 'http://localhost:5175';
@@ -93,6 +93,7 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
   const [floodPlaying, setFloodPlaying] = useState(false);
   const [showFlood, setShowFlood] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
+  const [showBuildings, setShowBuildings] = useState(false);
 
   const floodIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -331,6 +332,45 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
     } catch {}
   }, [showLabels]);
 
+  // ── Toggle buildings vs terrain ───────────────────────────────────
+  useEffect(() => {
+    if (!mapRef.current?.isStyleLoaded()) return;
+    try {
+      if (showBuildings) {
+        // Disable terrain → enable buildings
+        mapRef.current.setTerrain(null);
+        if (!mapRef.current.getLayer('3d-buildings')) {
+          mapRef.current.addLayer({
+            id: '3d-buildings',
+            type: 'fill-extrusion',
+            source: 'maptiler-buildings',
+            'source-layer': 'building',
+            minzoom: 12,
+            paint: {
+              'fill-extrusion-color': '#e0e7ff',
+              'fill-extrusion-height': ['case', ['has', 'render_height'], ['get', 'render_height'], ['has', 'height'], ['get', 'height'], 15],
+              'fill-extrusion-base': ['case', ['has', 'render_min_height'], ['get', 'render_min_height'], ['has', 'min_height'], ['get', 'min_height'], 0],
+              'fill-extrusion-opacity': 0.75,
+              'fill-extrusion-vertical-gradient': true,
+            },
+          });
+        }
+        if (mapRef.current.getLayer('hillshade-layer')) {
+          mapRef.current.setLayoutProperty('hillshade-layer', 'visibility', 'none');
+        }
+      } else {
+        // Enable terrain → remove buildings
+        if (mapRef.current.getLayer('3d-buildings')) {
+          mapRef.current.removeLayer('3d-buildings');
+        }
+        mapRef.current.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
+        if (mapRef.current.getLayer('hillshade-layer')) {
+          mapRef.current.setLayoutProperty('hillshade-layer', 'visibility', 'visible');
+        }
+      }
+    } catch (e) { console.warn('Toggle failed:', e); }
+  }, [showBuildings]);
+
 
 
   // ── Update flood overlay ──────────────────────────────────────────
@@ -375,6 +415,13 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
           className={`p-2 rounded-lg shadow-md transition-colors ${showLabels ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
           title="Toggle place labels">
           <Layers className="w-4 h-4" />
+        </button>
+
+        {/* Buildings/Terrain toggle */}
+        <button onClick={() => setShowBuildings(!showBuildings)}
+          className={`p-2 rounded-lg shadow-md transition-colors ${showBuildings ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+          title={showBuildings ? "Switch to 3D terrain view" : "Switch to 3D buildings view"}>
+          {showBuildings ? <Mountain className="w-4 h-4" /> : <Building className="w-4 h-4" />}
         </button>
 
         {/* Flood toggle */}
