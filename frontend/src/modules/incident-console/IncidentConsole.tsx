@@ -295,36 +295,38 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
           },
         });
 
-        // ── 3D BUILDING EXTRUSION LAYER ──────────────────────
-        if (!map.getSource('openmaptiles')) {
-          map.addSource('openmaptiles', {
+        // ── 3D BUILDING EXTRUSIONS (MapTiler) ─────────────────
+        if (!map.getSource('maptiler-buildings')) {
+          map.addSource('maptiler-buildings', {
             type: 'vector',
-            url: 'https://tiles.openfreemap.org/planet',
+            url: 'https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ',
           });
         }
-        map.addLayer({
-          id: '3d-buildings',
-          source: 'openmaptiles',
-          'source-layer': 'building',
-          type: 'fill-extrusion',
-          minzoom: 13,
-          paint: {
-            'fill-extrusion-color': '#e0e7ff',
-            'fill-extrusion-height': [
-              'case',
-              ['has', 'render_height'], ['get', 'render_height'],
-              ['has', 'height'], ['get', 'height'],
-              15
-            ],
-            'fill-extrusion-base': [
-              'case',
-              ['has', 'render_min_height'], ['get', 'render_min_height'],
-              ['has', 'min_height'], ['get', 'min_height'],
-              0
-            ],
-            'fill-extrusion-opacity': 0.75,
-          },
-        });
+        if (!map.getLayer('3d-buildings')) {
+          map.addLayer({
+            id: '3d-buildings',
+            type: 'fill-extrusion',
+            source: 'maptiler-buildings',
+            'source-layer': 'building',
+            minzoom: 12,
+            paint: {
+              'fill-extrusion-color': '#e0e7ff',
+              'fill-extrusion-height': [
+                'case',
+                ['has', 'render_height'], ['get', 'render_height'],
+                ['has', 'height'], ['get', 'height'],
+                15
+              ],
+              'fill-extrusion-base': [
+                'case',
+                ['has', 'render_min_height'], ['get', 'render_min_height'],
+                ['has', 'min_height'], ['get', 'min_height'],
+                0
+              ],
+              'fill-extrusion-opacity': 0.75,
+            },
+          });
+        }
 
         // ── Click handler ──────────────────────────────────────────
         map.on('click', 'dams-dots', (e: any) => {
