@@ -322,7 +322,7 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
         const mgl = (maplibregl as any).Map ? maplibregl : (maplibregl as any).default || maplibregl;
         import('maplibre-gl/dist/maplibre-gl.css').catch(() => {});
 
-        const container = document.querySelector('.maplibregl-map')?.parentElement || document.querySelector('[class*="relative w-full h-full"]');
+        const container = mapContainer.current;  // React ref persists after map.remove()
         if (!container) { console.error('No container found'); return; }
 
         const style = next ? {
