@@ -86,7 +86,7 @@ function generateFloodPolygon(dam: DamPoint, progress: number): GeoJSON.Feature 
 }
 
 // ── Inline MapLibre: Satellite + 3D Terrain + Flood Simulation ────
-function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint) => void; selectedDam: DamPoint | null }) {
+function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (d: DamPoint) => void; selectedDam: DamPoint | null; onMapReady: (map: any) => void }) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const [floodProgress, setFloodProgress] = useState(0);
@@ -157,15 +157,7 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
       map.addControl(new mgl.ScaleControl(), 'bottom-left');
       map.addControl(new mgl.AttributionControl({ compact: true }), 'bottom-right');
 
-      // ── Dynamic projection switcher ──────────────────────────────
-      map.on('zoom', () => {
-        const zoom = map.getZoom();
-        if (zoom > 5) {
-          map.setProjection({ type: 'mercator' });
-        } else {
-          map.setProjection({ type: 'globe' });
-        }
-      });        map.on('load', () => {
+        map.on('load', () => {
         // ── 3D Globe projection + terrain ──────────────────────────
         map.setProjection({ type: 'globe' });
         map.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
@@ -180,153 +172,10 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
           'fog-ground-blend': 0.5,
         });
 
-        // ── Hillshade layer using the same DEM source ──────────────
-        map.addLayer({
-          id: 'hillshade-layer',
-          type: 'hillshade',
-          source: 'terrain-dem',
-          paint: {
-            'hillshade-exaggeration': 0.8,
-            'hillshade-shadow-color': '#1a1040',
-            'hillshade-highlight-color': '#ffe8c8',
-            'hillshade-accent-color': '#2a6fa7',
-          },
-        }, 'satellite');
-
-        // ── Labels layer on top (togglable) ────────────────────────
-        map.addSource('labels', {
-          type: 'raster',
-          tiles: [
-            'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-          ],
-          tileSize: 256,
-          maxzoom: 18,
+        map.addSource('maptiler-buildings', {
+          type: 'vector',
+          url: 'https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ',
         });
-        map.addLayer({
-          id: 'labels-layer',
-          type: 'raster',
-          source: 'labels',
-          paint: { 'raster-opacity': 0.85 },
-        });
-
-        // ── Dam markers ────────────────────────────────────────────
-        const features = INDIA_DAMS.map((dam) => ({
-          type: 'Feature' as const,
-          geometry: { type: 'Point' as const, coordinates: [dam.lon, dam.lat] },
-          properties: {
-            id: dam.id, name: dam.name, state: dam.state, river: dam.river,
-            height_m: dam.height_m, capacity_mcm: dam.capacity_mcm,
-            type: dam.type, year_built: dam.year_built,
-            hazard_color: classifyHazard(dam).color,
-          },
-        }));
-
-        map.addSource('dams', { type: 'geojson', data: { type: 'FeatureCollection', features } });
-
-        // Glow halo — clamped to terrain surface
-        map.addLayer({
-          id: 'dams-glow', type: 'circle', source: 'dams',
-          paint: {
-            'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 8, 300, 22],
-            'circle-color': ['get', 'hazard_color'],
-            'circle-opacity': 0.25,
-            'circle-blur': 2,
-            'circle-pitch-alignment': 'map',
-            'circle-pitch-scale': 'map',
-          },
-        });
-
-        // Solid dot — clamped to terrain surface
-        map.addLayer({
-          id: 'dams-dots', type: 'circle', source: 'dams',
-          paint: {
-            'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 4, 300, 12],
-            'circle-color': ['get', 'hazard_color'],
-            'circle-stroke-color': '#fff',
-            'circle-stroke-width': 2,
-            'circle-opacity': 0.95,
-            'circle-pitch-alignment': 'map',
-            'circle-pitch-scale': 'map',
-          },
-        });
-
-        // Labels — clamped to terrain surface
-        map.addLayer({
-          id: 'dams-labels', type: 'symbol', source: 'dams',
-          layout: {
-            'text-field': ['to-string', ['get', 'name']],
-            'text-size': 11,
-            'text-offset': [0, 1.8],
-            'text-anchor': 'top',
-            'text-allow-overlap': false,
-            'text-pitch-alignment': 'map',
-          },
-          paint: {
-            'text-color': '#fff',
-            'text-halo-color': 'rgba(0,0,0,0.7)',
-            'text-halo-width': 2,
-          },
-        });
-
-        // ── Flood extent overlay (initially empty) ─────────────────
-        map.addSource('flood-extent', {
-          type: 'geojson',
-          data: { type: 'FeatureCollection', features: [] },
-        });
-        map.addLayer({
-          id: 'flood-fill', type: 'fill', source: 'flood-extent',
-          paint: {
-            'fill-color': [
-              'interpolate', ['linear'], ['get', 'progress'],
-              0, 'rgba(59,130,246,0.1)',
-              0.3, 'rgba(59,130,246,0.25)',
-              0.6, 'rgba(37,99,235,0.4)',
-              1, 'rgba(30,64,175,0.55)',
-            ],
-            'fill-opacity': 0.7,
-          },
-        });
-        map.addLayer({
-          id: 'flood-outline', type: 'line', source: 'flood-extent',
-          paint: {
-            'line-color': '#3b82f6',
-            'line-width': 2,
-            'line-opacity': 0.8,
-          },
-        });
-
-        // ── 3D BUILDING EXTRUSIONS (MapTiler) ─────────────────
-        if (!map.getSource('maptiler-buildings')) {
-          map.addSource('maptiler-buildings', {
-            type: 'vector',
-            url: 'https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ',
-          });
-        }
-        if (!map.getLayer('3d-buildings')) {
-          map.addLayer({
-            id: '3d-buildings',
-            type: 'fill-extrusion',
-            source: 'maptiler-buildings',
-            'source-layer': 'building',
-            minzoom: 12,
-            paint: {
-              'fill-extrusion-color': '#e0e7ff',
-              'fill-extrusion-height': [
-                'case',
-                ['has', 'render_height'], ['get', 'render_height'],
-                ['has', 'height'], ['get', 'height'],
-                15
-              ],
-              'fill-extrusion-base': [
-                'case',
-                ['has', 'render_min_height'], ['get', 'render_min_height'],
-                ['has', 'min_height'], ['get', 'min_height'],
-                0
-              ],
-              'fill-extrusion-opacity': 0.75,
-            },
-          });
-        }
 
         // ── Click handler ──────────────────────────────────────────
         map.on('click', 'dams-dots', (e: any) => {
@@ -340,23 +189,68 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
       });
 
       mapRef.current = map;
+      onMapReady(map);
     });
 
     return () => { mapRef.current?.remove(); mapRef.current = null; };
   }, []);
 
-  // ── Fly to selected dam (force Mercator for 3D terrain) ──────
+  // Fly to selected dam (force Mercator for 3D terrain)
   useEffect(() => {
     if (!mapRef.current || !selectedDam) return;
     mapRef.current.setProjection({ type: 'mercator' });
-    mapRef.current.flyTo({
+    mapRef.current.jumpTo({
       center: [selectedDam.lon, selectedDam.lat],
-      zoom: 13.5,
-      pitch: 65,
-      bearing: 30,
-      duration: 2500,
-      essential: true,
+      zoom: 4,
     });
+    // Fly to exact dam coordinates after projection settles
+    setTimeout(() => {
+      if (!mapRef.current) return;
+      mapRef.current.flyTo({
+        center: [selectedDam.lon, selectedDam.lat],
+        zoom: 13.5,
+        pitch: 65,
+        bearing: 30,
+        duration: 3000,
+        essential: true,
+      });
+    }, 300);
+
+      // Add buildings after flyTo completes and Mercator projection is active
+      const onProjectionChange = () => {
+        if (!mapRef.current) return;
+        try {
+          // Remove terrain first — required for fill-extrusion
+          mapRef.current.setTerrain(null);
+          // Add buildings
+          if (!mapRef.current.getLayer('3d-buildings')) {
+            mapRef.current.addLayer({
+              id: '3d-buildings',
+              type: 'fill-extrusion',
+              source: 'maptiler-buildings',
+              'source-layer': 'building',
+              minzoom: 12,
+              paint: {
+                'fill-extrusion-color': '#e0e7ff',
+                'fill-extrusion-height': ['case', ['has', 'render_height'], ['get', 'render_height'], ['has', 'height'], ['get', 'height'], 15],
+                'fill-extrusion-base': ['case', ['has', 'render_min_height'], ['get', 'render_min_height'], ['has', 'min_height'], ['get', 'min_height'], 0],
+                'fill-extrusion-opacity': 0.75,
+                'fill-extrusion-vertical-gradient': true,
+              },
+            });
+          }
+          // Re-enable terrain after buildings load
+          setTimeout(() => {
+            if (mapRef.current) {
+              mapRef.current.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
+            }
+          }, 2000);
+        } catch (e) { console.warn('Buildings add failed:', e); }
+        mapRef.current.off('projectiontransition', onProjectionChange);
+      };
+      mapRef.current.on('projectiontransition', onProjectionChange);
+      // Fallback: if projection is already mercator, fire immediately
+      setTimeout(onProjectionChange, 1500);
   }, [selectedDam]);
 
   // ── Toggle labels ─────────────────────────────────────────────────
@@ -465,6 +359,7 @@ export default function IncidentConsole() {
   const [geolibreOnline, setGeolibreOnline] = useState<boolean | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [geolibreReady, setGeolibreReady] = useState(false);
+  const mapLibreRef = useRef<any>(null);
 
   // Check if GeoLibre is running
   useEffect(() => {
@@ -491,32 +386,35 @@ export default function IncidentConsole() {
 
   // Fly to exact dam location (force Mercator for 3D terrain)
   const flyToDam = useCallback((dam: DamPoint) => {
-    // 1) Switch to Mercator + fly to exact coordinates
-    if (mapRef.current) {
-      mapRef.current.setProjection({ type: 'mercator' });
-      mapRef.current.flyTo({
+    if (mapLibreRef.current) {
+      mapLibreRef.current.setProjection({ type: 'mercator' });
+      mapLibreRef.current.jumpTo({
         center: [dam.lon, dam.lat],
-        zoom: 13.5,
-        pitch: 65,
-        bearing: 30,
-        duration: 2500,
-        essential: true,
+        zoom: 4,
       });
+      setTimeout(() => {
+        if (!mapLibreRef.current) return;
+        mapLibreRef.current.flyTo({
+          center: [dam.lon, dam.lat],
+          zoom: 13.5,
+          pitch: 65,
+          bearing: 30,
+          duration: 3000,
+          essential: true,
+        });
+      }, 300);
     }
 
-    // 2) Also send to GeoLibre iframe if it's running
     if (iframeRef.current?.contentWindow) {
       const msg = {
         v: 1,
         type: 'setView',
-        payload: { center: [dam.lon, dam.lat], zoom: 13.5, duration: 2500 },
-        requestId: `dam-${dam.id}-${Date.now()}`,
+        payload: { center: [dam.lon, dam.lat], zoom: 13.5, duration: 3000 },
+        requestId: 'dam-' + dam.id + '-' + Date.now(),
       };
       const target = GEOLIBRE_BASE;
       const send = () => {
-        try {
-          iframeRef.current?.contentWindow?.postMessage(msg, target);
-        } catch {}
+        try { iframeRef.current?.contentWindow?.postMessage(msg, target); } catch {}
       };
       send();
       const timers = [setTimeout(send, 1000), setTimeout(send, 2000), setTimeout(send, 4000)];
@@ -636,7 +534,7 @@ export default function IncidentConsole() {
             title="GeoLibre 3D Earth"
           />
         ) : geolibreOnline === false ? (
-          <InlineMapLibre onDamClick={handleDamClick} selectedDam={selectedDam} />
+          <InlineMapLibre onDamClick={handleDamClick} selectedDam={selectedDam} onMapReady={(m) => { mapLibreRef.current = m; }} />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-slate-100">
             <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
