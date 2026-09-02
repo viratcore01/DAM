@@ -314,101 +314,70 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
     const map = mapRef.current;
     if (!map) return;
     try {
-      if (next) {
-        // Reload entire map style WITHOUT terrain source — fill-extrusion cannot
-        // coexist with setTerrain() in MapLibre v6, even at exaggeration 0
-        map.setStyle({
-          version: 8,
-          name: 'DamSafe Buildings',
-          glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
-          sources: {
-            satellite: {
-              type: 'raster',
-              tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
-              tileSize: 256,
-              attribution: 'Esri, Maxar, Earthstar Geographics',
-              maxzoom: 18,
-            },
-            'maptiler-buildings': {
-              type: 'vector',
-              tiles: ['https://api.maptiler.com/tiles/v3/{z}/{x}/{y}.pbf?key=ApGvqBRr1WbzGPnokdoZ'],
-              maxzoom: 15,
-            },
-          },
-          layers: [
-            { id: 'satellite', type: 'raster', source: 'satellite' },
-          ],
-        });
+      // Destroy current map and create a fresh one (clean WebGL context)
+      map.remove();
+      mapRef.current = null;
 
-        // Wait for style to load, then add buildings layer and fly to Mumbai
-        map.once('idle', () => {
-          setTimeout(() => {
-          map.setProjection({ type: 'mercator' });
-          if (!map.getLayer('3d-buildings')) {
-            map.addLayer({
-              id: '3d-buildings',
-              type: 'fill-extrusion',
-              source: 'maptiler-buildings',
-              'source-layer': 'building',
-              minzoom: 13,
-              paint: {
-                'fill-extrusion-color': '#3498db',
-                'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 10],
-                'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
-                'fill-extrusion-opacity': 1,
-              },
-            });
-          }
-          map.flyTo({ center: [72.88, 19.08], zoom: 15.5, pitch: 65, bearing: -30, duration: 2500 });
-          console.log('Buildings ON: fresh style, no terrain, zooming to Mumbai');
-        }, 500);
-      });
-    } else {
-        // Reload original style WITH terrain
-        map.setStyle({
-          version: 8,
-          name: 'DamSafe Satellite 3D',
+      import('maplibre-gl').then((maplibregl) => {
+        const mgl = (maplibregl as any).Map ? maplibregl : (maplibregl as any).default || maplibregl;
+        import('maplibre-gl/dist/maplibre-gl.css').catch(() => {});
+
+        const container = document.querySelector('.maplibregl-map')?.parentElement || document.querySelector('[class*="relative w-full h-full"]');
+        if (!container) { console.error('No container found'); return; }
+
+        const style = next ? {
+          version: 8, name: 'DamSafe Buildings',
           glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
           sources: {
-            satellite: {
-              type: 'raster',
-              tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
-              tileSize: 256,
-              attribution: 'Esri, Maxar, Earthstar Geographics',
-              maxzoom: 18,
-            },
-            'terrain-dem': {
-              type: 'raster-dem',
-              tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
-              tileSize: 256,
-              maxzoom: 14,
-              encoding: 'terrarium',
-            },
+            satellite: { type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 18 },
+            buildings: { type: 'vector', tiles: ['https://api.maptiler.com/tiles/v3/{z}/{x}/{y}.pbf?key=ApGvqBRr1WbzGPnokdoZ'], maxzoom: 15 },
           },
           layers: [{ id: 'satellite', type: 'raster', source: 'satellite' }],
+        } : {
+          version: 8, name: 'DamSafe Satellite 3D',
+          glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+          sources: {
+            satellite: { type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 18 },
+            'terrain-dem': { type: 'raster-dem', tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'], tileSize: 256, maxzoom: 14, encoding: 'terrarium' },
+          },
+          layers: [{ id: 'satellite', type: 'raster', source: 'satellite' }],
+        };
+
+        const newMap = new (mgl.Map || mgl)({
+          container, style,
+          center: next ? [72.88, 19.08] : [78.9, 20.6],
+          zoom: next ? 15.5 : 2, pitch: next ? 65 : 45, bearing: next ? -30 : -17,
+          maxPitch: 75, fadeDuration: 0, antialias: true,
         });
-        map.once('idle', () => {
-          map.setProjection({ type: 'globe' });
-          map.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
-          map.addLayer({ id: 'hillshade-layer', type: 'hillshade', source: 'terrain-dem', paint: { 'hillshade-exaggeration': 0.8, 'hillshade-shadow-color': '#1a1040', 'hillshade-highlight-color': '#ffe8c8', 'hillshade-accent-color': '#2a6fa7' } }, 'satellite');
-          map.addSource('labels', { type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 18 });
-          map.addLayer({ id: 'labels-layer', type: 'raster', source: 'labels', paint: { 'raster-opacity': 0.85 } });
-          // Re-add dam markers
-          const features = INDIA_DAMS.map((dam) => ({
-            type: 'Feature', geometry: { type: 'Point', coordinates: [dam.lon, dam.lat] },
-            properties: { id: dam.id, name: dam.name, state: dam.state, river: dam.river, height_m: dam.height_m, capacity_mcm: dam.capacity_mcm, type: dam.type, year_built: dam.year_built, hazard_color: classifyHazard(dam).color },
-          }));
-          map.addSource('dams', { type: 'geojson', data: { type: 'FeatureCollection', features } });
-          map.addLayer({ id: 'dams-glow', type: 'circle', source: 'dams', paint: { 'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 8, 300, 22], 'circle-color': ['get', 'hazard_color'], 'circle-opacity': 0.25, 'circle-blur': 2, 'circle-pitch-alignment': 'map', 'circle-pitch-scale': 'map' } });
-          map.addLayer({ id: 'dams-dots', type: 'circle', source: 'dams', paint: { 'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 4, 300, 12], 'circle-color': ['get', 'hazard_color'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 2, 'circle-opacity': 0.95, 'circle-pitch-alignment': 'map', 'circle-pitch-scale': 'map' } });
-          map.addLayer({ id: 'dams-labels', type: 'symbol', source: 'dams', layout: { 'text-field': ['to-string', ['get', 'name']], 'text-size': 11, 'text-offset': [0, 1.8], 'text-anchor': 'top', 'text-allow-overlap': false, 'text-pitch-alignment': 'map' }, paint: { 'text-color': '#fff', 'text-halo-color': 'rgba(0,0,0,0.7)', 'text-halo-width': 2 } });
-          map.addSource('flood-extent', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-          map.addLayer({ id: 'flood-fill', type: 'fill', source: 'flood-extent', paint: { 'fill-color': ['interpolate', ['linear'], ['get', 'progress'], 0, 'rgba(59,130,246,0.1)', 0.3, 'rgba(59,130,246,0.25)', 0.6, 'rgba(37,99,235,0.4)', 1, 'rgba(30,64,175,0.55)'], 'fill-opacity': 0.7 } });
-          map.addLayer({ id: 'flood-outline', type: 'line', source: 'flood-extent', paint: { 'line-color': '#3b82f6', 'line-width': 2, 'line-opacity': 0.8 } });
-          map.flyTo({ center: [78.9, 20.6], zoom: 2, pitch: 45, bearing: -17, duration: 2000 });
-          console.log('Buildings OFF: restored Globe with terrain + all layers');
+
+        newMap.addControl(new mgl.NavigationControl({ visualizePitch: true }), 'top-right');
+        newMap.addControl(new mgl.ScaleControl(), 'bottom-left');
+        newMap.addControl(new mgl.AttributionControl({ compact: true }), 'bottom-right');
+
+        newMap.on('load', () => {
+          if (next) {
+            newMap.addLayer({ id: '3d-buildings', type: 'fill-extrusion', source: 'buildings', 'source-layer': 'building', minzoom: 13,
+              paint: { 'fill-extrusion-color': '#3498db', 'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 10], 'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0], 'fill-extrusion-opacity': 1 } });
+            console.log('Fresh map: 3D buildings layer added');
+          } else {
+            newMap.setProjection({ type: 'globe' });
+            newMap.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
+            newMap.addLayer({ id: 'hillshade-layer', type: 'hillshade', source: 'terrain-dem', paint: { 'hillshade-exaggeration': 0.8, 'hillshade-shadow-color': '#1a1040', 'hillshade-highlight-color': '#ffe8c8', 'hillshade-accent-color': '#2a6fa7' } }, 'satellite');
+            newMap.addSource('labels', { type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 18 });
+            newMap.addLayer({ id: 'labels-layer', type: 'raster', source: 'labels', paint: { 'raster-opacity': 0.85 } });
+            // Re-add dam markers
+            const features = INDIA_DAMS.map((dam) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [dam.lon, dam.lat] }, properties: { id: dam.id, name: dam.name, state: dam.state, river: dam.river, height_m: dam.height_m, capacity_mcm: dam.capacity_mcm, type: dam.type, year_built: dam.year_built, hazard_color: classifyHazard(dam).color } }));
+            newMap.addSource('dams', { type: 'geojson', data: { type: 'FeatureCollection', features } });
+            newMap.addLayer({ id: 'dams-glow', type: 'circle', source: 'dams', paint: { 'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 8, 300, 22], 'circle-color': ['get', 'hazard_color'], 'circle-opacity': 0.25, 'circle-blur': 2, 'circle-pitch-alignment': 'map', 'circle-pitch-scale': 'map' } });
+            newMap.addLayer({ id: 'dams-dots', type: 'circle', source: 'dams', paint: { 'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 4, 300, 12], 'circle-color': ['get', 'hazard_color'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 2, 'circle-opacity': 0.95, 'circle-pitch-alignment': 'map', 'circle-pitch-scale': 'map' } });
+            newMap.addLayer({ id: 'dams-labels', type: 'symbol', source: 'dams', layout: { 'text-field': ['to-string', ['get', 'name']], 'text-size': 11, 'text-offset': [0, 1.8], 'text-anchor': 'top', 'text-allow-overlap': false, 'text-pitch-alignment': 'map' }, paint: { 'text-color': '#fff', 'text-halo-color': 'rgba(0,0,0,0.7)', 'text-halo-width': 2 } });
+            console.log('Fresh map: Globe + terrain + dams restored');
+          }
         });
-      }
+
+        mapRef.current = newMap;
+        onMapReady(newMap);
+      });
     } catch (e) { console.warn('Buildings toggle:', e); }
   }}
           className={`p-2 rounded-lg shadow-md transition-colors ${showBuildings ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
