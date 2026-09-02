@@ -315,60 +315,48 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
     if (!map) return;
     try {
       if (next) {
-        map.setTerrain(null);
+        // MUST set terrain to 0 exaggeration (not null!) before fill-extrusion
+        map.setTerrain({ source: 'terrain-dem', exaggeration: 0 });
         try { map.setProjection({ type: 'mercator' }); } catch {}
         if (map.getLayer('hillshade-layer')) map.setLayoutProperty('hillshade-layer', 'visibility', 'none');
-
-        // Add MapTiler source if needed
-        if (!map.getSource('maptiler-buildings')) {
-          map.addSource('maptiler-buildings', {
-            type: 'vector',
-            url: 'https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ',
-          });
-        }
+        if (map.getLayer('satellite')) map.setLayoutProperty('satellite', 'visibility', 'visible');
 
         // Remove old layer if exists
         if (map.getLayer('3d-buildings')) map.removeLayer('3d-buildings');
+        if (map.getSource('maptiler-buildings')) map.removeSource('maptiler-buildings');
 
-        // Add 3D buildings layer — MapTiler has building data at zoom 13+
+        // Add MapTiler vector source
+        map.addSource('maptiler-buildings', {
+          type: 'vector',
+          url: 'https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ',
+        });
+
+        // Add 3D buildings — force at zoom 12+ with aggressive paint
         map.addLayer({
           id: '3d-buildings',
           type: 'fill-extrusion',
           source: 'maptiler-buildings',
           'source-layer': 'building',
-          minzoom: 13,
-          filter: ['!=', ['get', 'hide_3d'], true],
+          minzoom: 12,
           paint: {
-            'fill-extrusion-color': [
-              'interpolate', ['linear'], ['get', 'render_height'],
-              0, '#c8d6e5',
-              20, '#8395a7',
-              50, '#2e86de',
-              100, '#1e3799',
-            ],
-            'fill-extrusion-height': [
-              'interpolate', ['linear'], ['zoom'],
-              13, 0,
-              14, ['coalesce', ['get', 'render_height'], 10],
-            ],
-            'fill-extrusion-base': [
-              'coalesce', ['get', 'render_min_height'], 0,
-            ],
-            'fill-extrusion-opacity': 0.85,
+            'fill-extrusion-color': '#3498db',
+            'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 10],
+            'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
+            'fill-extrusion-opacity': 1,
           },
         });
 
-        // Fly to Mumbai at zoom 15 for guaranteed building visibility
-        map.flyTo({ center: [72.8777, 19.0760], zoom: 15, pitch: 60, bearing: -30, duration: 2500 });
-        console.log('Buildings: ON — flying to Mumbai zoom 15');
+        // Fly to Mumbai zoom 15 with 65 degree tilt
+        map.flyTo({ center: [72.88, 19.08], zoom: 15, pitch: 65, bearing: -30, duration: 2500 });
+        console.log('Buildings ON: source added, layer added, zooming to Mumbai');
       } else {
         if (map.getLayer('3d-buildings')) map.removeLayer('3d-buildings');
         if (map.getSource('maptiler-buildings')) map.removeSource('maptiler-buildings');
-        try { map.setProjection({ type: 'globe' }); } catch {}
         map.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
         if (map.getLayer('hillshade-layer')) map.setLayoutProperty('hillshade-layer', 'visibility', 'visible');
+        try { map.setProjection({ type: 'globe' }); } catch {}
         map.flyTo({ center: [78.9, 20.6], zoom: 2, pitch: 45, bearing: -17, duration: 2000 });
-        console.log('Buildings: OFF — back to Globe');
+        console.log('Buildings OFF: back to Globe');
       }
     } catch (e) { console.warn('Buildings toggle:', e); }
   }}
