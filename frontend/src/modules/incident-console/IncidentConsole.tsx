@@ -331,7 +331,8 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
             },
             'maptiler-buildings': {
               type: 'vector',
-              url: 'https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ',
+              tiles: ['https://api.maptiler.com/tiles/v3/{z}/{x}/{y}.pbf?key=ApGvqBRr1WbzGPnokdoZ'],
+              maxzoom: 15,
             },
           },
           layers: [
