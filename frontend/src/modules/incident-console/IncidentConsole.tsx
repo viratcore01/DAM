@@ -93,7 +93,7 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
   const [floodPlaying, setFloodPlaying] = useState(false);
   const [showFlood, setShowFlood] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
-  const [showBuildings, setShowBuildings] = useState(true);
+
   const floodIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Initialize map
@@ -275,122 +275,10 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
           },
         });
 
-        // ── 3D Buildings (OpenFreeMap vector tiles) ─────────────────
-        map.addSource('openmaptiles', {
-          type: 'vector',
-          tiles: ['https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf'],
-          maxzoom: 14,
-          attribution: '© OpenFreeMap contributors',
-        });
-
-        // 3D building extrusions — deferred to zoom 14.5 for performance
-        map.addLayer({
-          id: '3d-buildings',
-          source: 'openmaptiles',
-          'source-layer': 'building',
-          type: 'fill-extrusion',
-          minzoom: 14.5,
-          paint: {
-            'fill-extrusion-color': '#d1d5db',
-            'fill-extrusion-height': [
-              'coalesce', ['get', 'render_height'], ['get', 'height'], 10,
-            ],
-            'fill-extrusion-base': [
-              'coalesce', ['get', 'render_min_height'], ['get', 'min_height'], 0,
-            ],
-            'fill-extrusion-opacity': 0.8,
-            'fill-extrusion-vertical-gradient': true,
-          },
-        });
-
-        // ── River / waterway lines ─────────────────────────────────
-        map.addLayer({
-          id: 'waterways',
-          source: 'openmaptiles',
-          'source-layer': 'waterway',
-          type: 'line',
-          minzoom: 8,
-          paint: {
-            'line-color': '#4fc3f7',
-            'line-width': [
-              'interpolate', ['linear'], ['coalesce', ['get', 'width'], 1],
-              1, 0.5,
-              5, 2,
-              10, 4,
-            ],
-            'line-opacity': 0.6,
-          },
-        });
-
-        // ── Water bodies (lakes, reservoirs) ────────────────────────
-        map.addLayer({
-          id: 'water-bodies',
-          source: 'openmaptiles',
-          'source-layer': 'water',
-          type: 'fill',
-          paint: {
-            'fill-color': '#29b6f6',
-            'fill-opacity': 0.4,
-          },
-        });
-
-        // ── Road network ───────────────────────────────────────────
-        map.addLayer({
-          id: 'roads-major',
-          source: 'openmaptiles',
-          'source-layer': 'transportation',
-          type: 'line',
-          minzoom: 6,
-          filter: ['all', ['in', 'class', 'motorway', 'trunk', 'primary', 'secondary']],
-          paint: {
-            'line-color': '#e17055',
-            'line-width': [
-              'interpolate', ['linear'], ['zoom'],
-              6, 0.5,
-              10, 1.5,
-              14, 3,
-            ],
-            'line-opacity': 0.5,
-          },
-        });
-
-        // ── Forest / landcover (visible green overlay on satellite) ─
-        map.addLayer({
-          id: 'landcover-forest',
-          source: 'openmaptiles',
-          'source-layer': 'landcover',
-          type: 'fill',
-          filter: ['in', 'class', 'forest', 'wood', 'grass', 'scrub'],
-          paint: {
-            'fill-color': [
-              'match', ['get', 'class'],
-              'forest', '#1b7a3d',
-              'wood', '#229954',
-              'grass', '#2ecc71',
-              'scrub', '#52be80',
-              '#27ae60',
-            ],
-            'fill-opacity': [
-              'interpolate', ['linear'], ['zoom'],
-              5, 0.12,
-              10, 0.25,
-              14, 0.4,
-            ],
-          },
-        }, 'satellite');
-
-        // ── Parks / protected areas ─────────────────────────────────
-        map.addLayer({
-          id: 'landuse-park',
-          source: 'openmaptiles',
-          'source-layer': 'landuse',
-          type: 'fill',
-          filter: ['in', 'class', 'park', 'nature_reserve', 'protected_area'],
-          paint: {
-            'fill-color': '#2ecc71',
-            'fill-opacity': 0.3,
-          },
-        }, 'satellite');
+        // ── NOTE: OpenFreeMap vector tiles return 0 bytes (dead) ──
+        // Buildings, forests, roads, waterways removed until a working
+        // vector tile provider is available.
+        // The satellite + terrain + dam markers + flood overlay all work.
 
         // ── Click handler ──────────────────────────────────────────
         map.on('click', 'dams-dots', (e: any) => {
@@ -430,13 +318,7 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
     } catch {}
   }, [showLabels]);
 
-  // ── Toggle 3D buildings ───────────────────────────────────────────
-  useEffect(() => {
-    if (!mapRef.current?.isStyleLoaded()) return;
-    try {
-      mapRef.current.setLayoutProperty('3d-buildings', 'visibility', showBuildings ? 'visible' : 'none');
-    } catch {}
-  }, [showBuildings]);
+
 
   // ── Update flood overlay ──────────────────────────────────────────
   useEffect(() => {
@@ -481,12 +363,7 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
           title="Toggle place labels">
           <Layers className="w-4 h-4" />
         </button>
-        {/* 3D Buildings toggle */}
-        <button onClick={() => setShowBuildings(!showBuildings)}
-          className={`p-2 rounded-lg shadow-md transition-colors ${showBuildings ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-          title="Toggle 3D buildings">
-          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 21h18M5 21V7l8-4v18M13 21V3l6 4v14"/><path d="M9 9h1M9 13h1M15 9h1M15 13h1"/></svg>
-        </button>
+
         {/* Flood toggle */}
         <button onClick={() => { setShowFlood(!showFlood); if (!showFlood) setFloodProgress(0.5); }}
           className={`p-2 rounded-lg shadow-md transition-colors ${showFlood ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
