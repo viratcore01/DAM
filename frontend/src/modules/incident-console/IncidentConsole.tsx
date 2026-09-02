@@ -144,7 +144,7 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
         style,
         center: [78.9, 20.6],
         zoom: 1,
-        pitch: 30,
+        pitch: 45,
         bearing: -17,
         maxPitch: 75,
         fadeDuration: 0,
@@ -157,37 +157,152 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
       map.addControl(new mgl.ScaleControl(), 'bottom-left');
       map.addControl(new mgl.AttributionControl({ compact: true }), 'bottom-right');
 
-        map.on('load', () => {
-        // ── 3D Globe projection + terrain ──────────────────────────
-        map.setProjection({ type: 'globe' });
+      map.on('load', () => {
+        // ── 3D Terrain ──────────────────────────────────────────
         map.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
 
-        // ── Sky horizon layer ─────────────────────────────────────
-        map.setSky({
-          'sky-color': '#199EF3',
-          'sky-horizon-blend': 0.5,
-          'horizon-color': '#ffffff',
-          'horizon-fog-blend': 0.5,
-          'fog-color': '#000000',
-          'fog-ground-blend': 0.5,
+        // ── Hillshade layer ──────────────────────────────────────
+        map.addLayer({
+          id: 'hillshade-layer',
+          type: 'hillshade',
+          source: 'terrain-dem',
+          paint: {
+            'hillshade-exaggeration': 0.8,
+            'hillshade-shadow-color': '#1a1040',
+            'hillshade-highlight-color': '#ffe8c8',
+            'hillshade-accent-color': '#2a6fa7',
+          },
+        }, 'satellite');
+
+        // ── Labels layer (togglable) ─────────────────────────────
+        map.addSource('labels', {
+          type: 'raster',
+          tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'],
+          tileSize: 256,
+          maxzoom: 18,
+        });
+        map.addLayer({
+          id: 'labels-layer',
+          type: 'raster',
+          source: 'labels',
+          paint: { 'raster-opacity': 0.85 },
         });
 
+        // ── Dam markers ──────────────────────────────────────────
+        const features = INDIA_DAMS.map((dam) => ({
+          type: 'Feature' as const,
+          geometry: { type: 'Point' as const, coordinates: [dam.lon, dam.lat] },
+          properties: {
+            id: dam.id, name: dam.name, state: dam.state, river: dam.river,
+            height_m: dam.height_m, capacity_mcm: dam.capacity_mcm,
+            type: dam.type, year_built: dam.year_built,
+            hazard_color: classifyHazard(dam).color,
+          },
+        }));
+
+        map.addSource('dams', { type: 'geojson', data: { type: 'FeatureCollection', features } });
+
+        // Glow halo
+        map.addLayer({
+          id: 'dams-glow', type: 'circle', source: 'dams',
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 8, 300, 22],
+            'circle-color': ['get', 'hazard_color'],
+            'circle-opacity': 0.25,
+            'circle-blur': 2,
+            'circle-pitch-alignment': 'map',
+            'circle-pitch-scale': 'map',
+          },
+        });
+
+        // Solid dot
+        map.addLayer({
+          id: 'dams-dots', type: 'circle', source: 'dams',
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'height_m'], 30, 4, 300, 12],
+            'circle-color': ['get', 'hazard_color'],
+            'circle-stroke-color': '#fff',
+            'circle-stroke-width': 2,
+            'circle-opacity': 0.95,
+            'circle-pitch-alignment': 'map',
+            'circle-pitch-scale': 'map',
+          },
+        });
+
+        // Labels
+        map.addLayer({
+          id: 'dams-labels', type: 'symbol', source: 'dams',
+          layout: {
+            'text-field': ['to-string', ['get', 'name']],
+            'text-size': 11,
+            'text-offset': [0, 1.8],
+            'text-anchor': 'top',
+            'text-allow-overlap': false,
+            'text-pitch-alignment': 'map',
+          },
+          paint: {
+            'text-color': '#fff',
+            'text-halo-color': 'rgba(0,0,0,0.7)',
+            'text-halo-width': 2,
+          },
+        });
+
+        // ── Flood overlay ────────────────────────────────────────
+        map.addSource('flood-extent', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [] },
+        });
+        map.addLayer({
+          id: 'flood-fill', type: 'fill', source: 'flood-extent',
+          paint: {
+            'fill-color': [
+              'interpolate', ['linear'], ['get', 'progress'],
+              0, 'rgba(59,130,246,0.1)',
+              0.3, 'rgba(59,130,246,0.25)',
+              0.6, 'rgba(37,99,235,0.4)',
+              1, 'rgba(30,64,175,0.55)',
+            ],
+            'fill-opacity': 0.7,
+          },
+        });
+        map.addLayer({
+          id: 'flood-outline', type: 'line', source: 'flood-extent',
+          paint: {
+            'line-color': '#3b82f6',
+            'line-width': 2,
+            'line-opacity': 0.8,
+          },
+        });
+
+        // ── 3D BUILDING EXTRUSIONS (MapTiler) ───────────────────
         map.addSource('maptiler-buildings', {
           type: 'vector',
           url: 'https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ',
         });
+        map.addLayer({
+          id: '3d-buildings',
+          type: 'fill-extrusion',
+          source: 'maptiler-buildings',
+          'source-layer': 'building',
+          minzoom: 12,
+          paint: {
+            'fill-extrusion-color': '#e0e7ff',
+            'fill-extrusion-height': ['case', ['has', 'render_height'], ['get', 'render_height'], ['has', 'height'], ['get', 'height'], 15],
+            'fill-extrusion-base': ['case', ['has', 'render_min_height'], ['get', 'render_min_height'], ['has', 'min_height'], ['get', 'min_height'], 0],
+            'fill-extrusion-opacity': 0.75,
+            'fill-extrusion-vertical-gradient': true,
+          },
+        });
 
-        // ── Click handler ──────────────────────────────────────────
+        // ── Click handler ────────────────────────────────────────
         map.on('click', 'dams-dots', (e: any) => {
           if (!e.features?.length) return;
           const dam = INDIA_DAMS.find(d => d.id === e.features[0].properties.id);
           if (dam) { onDamClick(dam); e.preventDefault(); }
         });
-
         map.on('mouseenter', 'dams-dots', () => { map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', 'dams-dots', () => { map.getCanvas().style.cursor = ''; });
       });
-
       mapRef.current = map;
       onMapReady(map);
     });
@@ -195,62 +310,17 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
     return () => { mapRef.current?.remove(); mapRef.current = null; };
   }, []);
 
-  // Fly to selected dam (force Mercator for 3D terrain)
+  // Fly to selected dam
   useEffect(() => {
     if (!mapRef.current || !selectedDam) return;
-    mapRef.current.setProjection({ type: 'mercator' });
-    mapRef.current.jumpTo({
+    mapRef.current.flyTo({
       center: [selectedDam.lon, selectedDam.lat],
-      zoom: 4,
+      zoom: 13.5,
+      pitch: 65,
+      bearing: 30,
+      duration: 3000,
+      essential: true,
     });
-    // Fly to exact dam coordinates after projection settles
-    setTimeout(() => {
-      if (!mapRef.current) return;
-      mapRef.current.flyTo({
-        center: [selectedDam.lon, selectedDam.lat],
-        zoom: 13.5,
-        pitch: 65,
-        bearing: 30,
-        duration: 3000,
-        essential: true,
-      });
-    }, 300);
-
-      // Add buildings after flyTo completes and Mercator projection is active
-      const onProjectionChange = () => {
-        if (!mapRef.current) return;
-        try {
-          // Remove terrain first — required for fill-extrusion
-          mapRef.current.setTerrain(null);
-          // Add buildings
-          if (!mapRef.current.getLayer('3d-buildings')) {
-            mapRef.current.addLayer({
-              id: '3d-buildings',
-              type: 'fill-extrusion',
-              source: 'maptiler-buildings',
-              'source-layer': 'building',
-              minzoom: 12,
-              paint: {
-                'fill-extrusion-color': '#e0e7ff',
-                'fill-extrusion-height': ['case', ['has', 'render_height'], ['get', 'render_height'], ['has', 'height'], ['get', 'height'], 15],
-                'fill-extrusion-base': ['case', ['has', 'render_min_height'], ['get', 'render_min_height'], ['has', 'min_height'], ['get', 'min_height'], 0],
-                'fill-extrusion-opacity': 0.75,
-                'fill-extrusion-vertical-gradient': true,
-              },
-            });
-          }
-          // Re-enable terrain after buildings load
-          setTimeout(() => {
-            if (mapRef.current) {
-              mapRef.current.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
-            }
-          }, 2000);
-        } catch (e) { console.warn('Buildings add failed:', e); }
-        mapRef.current.off('projectiontransition', onProjectionChange);
-      };
-      mapRef.current.on('projectiontransition', onProjectionChange);
-      // Fallback: if projection is already mercator, fire immediately
-      setTimeout(onProjectionChange, 1500);
   }, [selectedDam]);
 
   // ── Toggle labels ─────────────────────────────────────────────────
@@ -384,25 +454,17 @@ export default function IncidentConsole() {
     return () => window.removeEventListener('message', handler);
   }, []);
 
-  // Fly to exact dam location (force Mercator for 3D terrain)
+  // Fly to exact dam location
   const flyToDam = useCallback((dam: DamPoint) => {
     if (mapLibreRef.current) {
-      mapLibreRef.current.setProjection({ type: 'mercator' });
-      mapLibreRef.current.jumpTo({
+      mapLibreRef.current.flyTo({
         center: [dam.lon, dam.lat],
-        zoom: 4,
+        zoom: 13.5,
+        pitch: 65,
+        bearing: 30,
+        duration: 3000,
+        essential: true,
       });
-      setTimeout(() => {
-        if (!mapLibreRef.current) return;
-        mapLibreRef.current.flyTo({
-          center: [dam.lon, dam.lat],
-          zoom: 13.5,
-          pitch: 65,
-          bearing: 30,
-          duration: 3000,
-          essential: true,
-        });
-      }, 300);
     }
 
     if (iframeRef.current?.contentWindow) {
