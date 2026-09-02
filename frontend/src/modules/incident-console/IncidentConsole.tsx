@@ -308,7 +308,70 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
         </button>
 
         {/* Buildings/Terrain toggle */}
-        <button onClick={() => { const next = !showBuildings; setShowBuildings(next); const map = mapRef.current; if (!map) return; try { if (next) { map.setTerrain(null); try { map.setProjection({ type: "mercator" }); } catch {} if (map.getLayer("hillshade-layer")) map.setLayoutProperty("hillshade-layer", "visibility", "none"); if (!map.getSource("maptiler-buildings")) { map.addSource("maptiler-buildings", { type: "vector", url: "https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ" }); } if (!map.getLayer("3d-buildings")) { map.addLayer({ id: "3d-buildings", type: "fill-extrusion", source: "maptiler-buildings", "source-layer": "building", minzoom: 10, paint: { "fill-extrusion-color": "#e0e7ff", "fill-extrusion-height": ["case", ["has", "render_height"], ["get", "render_height"], ["has", "height"], ["get", "height"], 15], "fill-extrusion-base": 0, "fill-extrusion-opacity": 0.75 } }); } map.flyTo({ center: [72.8777, 19.0760], zoom: 14, pitch: 60, bearing: -17, duration: 2000 }); } else { if (map.getLayer("3d-buildings")) map.removeLayer("3d-buildings"); if (map.getSource("maptiler-buildings")) map.removeSource("maptiler-buildings"); try { map.setProjection({ type: "globe" }); } catch {} map.setTerrain({ source: "terrain-dem", exaggeration: 1.0 }); if (map.getLayer("hillshade-layer")) map.setLayoutProperty("hillshade-layer", "visibility", "visible"); map.flyTo({ center: [78.9, 20.6], zoom: 2, pitch: 45, bearing: -17, duration: 2000 }); } } catch (e) { console.warn("Buildings toggle:", e); } }}
+        <button onClick={() => {
+    const next = !showBuildings;
+    setShowBuildings(next);
+    const map = mapRef.current;
+    if (!map) return;
+    try {
+      if (next) {
+        map.setTerrain(null);
+        try { map.setProjection({ type: 'mercator' }); } catch {}
+        if (map.getLayer('hillshade-layer')) map.setLayoutProperty('hillshade-layer', 'visibility', 'none');
+
+        // Add MapTiler source if needed
+        if (!map.getSource('maptiler-buildings')) {
+          map.addSource('maptiler-buildings', {
+            type: 'vector',
+            url: 'https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ',
+          });
+        }
+
+        // Remove old layer if exists
+        if (map.getLayer('3d-buildings')) map.removeLayer('3d-buildings');
+
+        // Add 3D buildings layer — MapTiler has building data at zoom 13+
+        map.addLayer({
+          id: '3d-buildings',
+          type: 'fill-extrusion',
+          source: 'maptiler-buildings',
+          'source-layer': 'building',
+          minzoom: 13,
+          filter: ['!=', ['get', 'hide_3d'], true],
+          paint: {
+            'fill-extrusion-color': [
+              'interpolate', ['linear'], ['get', 'render_height'],
+              0, '#c8d6e5',
+              20, '#8395a7',
+              50, '#2e86de',
+              100, '#1e3799',
+            ],
+            'fill-extrusion-height': [
+              'interpolate', ['linear'], ['zoom'],
+              13, 0,
+              14, ['coalesce', ['get', 'render_height'], 10],
+            ],
+            'fill-extrusion-base': [
+              'coalesce', ['get', 'render_min_height'], 0,
+            ],
+            'fill-extrusion-opacity': 0.85,
+          },
+        });
+
+        // Fly to Mumbai at zoom 15 for guaranteed building visibility
+        map.flyTo({ center: [72.8777, 19.0760], zoom: 15, pitch: 60, bearing: -30, duration: 2500 });
+        console.log('Buildings: ON — flying to Mumbai zoom 15');
+      } else {
+        if (map.getLayer('3d-buildings')) map.removeLayer('3d-buildings');
+        if (map.getSource('maptiler-buildings')) map.removeSource('maptiler-buildings');
+        try { map.setProjection({ type: 'globe' }); } catch {}
+        map.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
+        if (map.getLayer('hillshade-layer')) map.setLayoutProperty('hillshade-layer', 'visibility', 'visible');
+        map.flyTo({ center: [78.9, 20.6], zoom: 2, pitch: 45, bearing: -17, duration: 2000 });
+        console.log('Buildings: OFF — back to Globe');
+      }
+    } catch (e) { console.warn('Buildings toggle:', e); }
+  }}
           className={`p-2 rounded-lg shadow-md transition-colors ${showBuildings ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
           title={showBuildings ? "Switch to 3D terrain view" : "Switch to 3D buildings view"}>
           {showBuildings ? <Mountain className="w-4 h-4" /> : <Building className="w-4 h-4" />}
