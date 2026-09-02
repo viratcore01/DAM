@@ -295,10 +295,36 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
           },
         });
 
-        // ── NOTE: OpenFreeMap vector tiles return 0 bytes (dead) ──
-        // Buildings, forests, roads, waterways removed until a working
-        // vector tile provider is available.
-        // The satellite + terrain + dam markers + flood overlay all work.
+        // ── 3D BUILDING EXTRUSION LAYER ──────────────────────
+        if (!map.getSource('openmaptiles')) {
+          map.addSource('openmaptiles', {
+            type: 'vector',
+            url: 'https://tiles.openfreemap.org/planet',
+          });
+        }
+        map.addLayer({
+          id: '3d-buildings',
+          source: 'openmaptiles',
+          'source-layer': 'building',
+          type: 'fill-extrusion',
+          minzoom: 13,
+          paint: {
+            'fill-extrusion-color': '#e0e7ff',
+            'fill-extrusion-height': [
+              'case',
+              ['has', 'render_height'], ['get', 'render_height'],
+              ['has', 'height'], ['get', 'height'],
+              15
+            ],
+            'fill-extrusion-base': [
+              'case',
+              ['has', 'render_min_height'], ['get', 'render_min_height'],
+              ['has', 'min_height'], ['get', 'min_height'],
+              0
+            ],
+            'fill-extrusion-opacity': 0.75,
+          },
+        });
 
         // ── Click handler ──────────────────────────────────────────
         map.on('click', 'dams-dots', (e: any) => {
