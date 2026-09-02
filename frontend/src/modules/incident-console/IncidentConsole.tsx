@@ -409,15 +409,15 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
     return () => { mapRef.current?.remove(); mapRef.current = null; };
   }, []);
 
-  // ── Fly to selected dam (on globe) ──────────────────────────────
+  // ── Fly to selected dam (exact coordinates on globe) ───────────
   useEffect(() => {
     if (!mapRef.current || !selectedDam) return;
     mapRef.current.flyTo({
       center: [selectedDam.lon, selectedDam.lat],
-      zoom: 5,
-      pitch: 30,
+      zoom: 12,
+      pitch: 45,
       bearing: -17,
-      duration: 3000,
+      duration: 2500,
       essential: true,
     });
   }, [selectedDam]);
@@ -563,30 +563,38 @@ export default function IncidentConsole() {
     return () => window.removeEventListener('message', handler);
   }, []);
 
-  // Robust fly-to with retries
+  // Fly to exact dam location on the globe
   const flyToDam = useCallback((dam: DamPoint) => {
-    if (!iframeRef.current?.contentWindow) return;
+    // 1) Fly inline MapLibre map to exact coordinates
+    if (mapRef.current) {
+      mapRef.current.flyTo({
+        center: [dam.lon, dam.lat],
+        zoom: 12,
+        pitch: 45,
+        bearing: -17,
+        duration: 2500,
+        essential: true,
+      });
+    }
 
-    const msg = {
-      v: 1,
-      type: 'setView',
-      payload: { center: [dam.lon, dam.lat], zoom: 12, duration: 2000 },
-      requestId: `dam-${dam.id}-${Date.now()}`,
-    };
-    const target = GEOLIBRE_BASE;
-
-    const send = () => {
-      try {
-        iframeRef.current?.contentWindow?.postMessage(msg, target);
-        console.log('[DamSafe] Sent setView to GeoLibre:', msg);
-      } catch (err) {
-        console.warn('[DamSafe] postMessage failed:', err);
-      }
-    };
-
-    send();
-    const timers = [setTimeout(send, 1000), setTimeout(send, 2000), setTimeout(send, 4000)];
-    return () => timers.forEach(clearTimeout);
+    // 2) Also send to GeoLibre iframe if it's running
+    if (iframeRef.current?.contentWindow) {
+      const msg = {
+        v: 1,
+        type: 'setView',
+        payload: { center: [dam.lon, dam.lat], zoom: 10, duration: 2500 },
+        requestId: `dam-${dam.id}-${Date.now()}`,
+      };
+      const target = GEOLIBRE_BASE;
+      const send = () => {
+        try {
+          iframeRef.current?.contentWindow?.postMessage(msg, target);
+        } catch {}
+      };
+      send();
+      const timers = [setTimeout(send, 1000), setTimeout(send, 2000), setTimeout(send, 4000)];
+      setTimeout(() => timers.forEach(clearTimeout), 5000);
+    }
   }, []);
 
   const handleDamClick = useCallback((dam: DamPoint) => {
