@@ -288,39 +288,47 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
           attribution: '© OpenFreeMap contributors',
         });
 
-        // 3D building extrusions — visible at zoom 13+
+        // 3D building extrusions — visible from zoom 11+
         map.addLayer({
           id: '3d-buildings',
           source: 'openmaptiles',
           'source-layer': 'building',
           type: 'fill-extrusion',
-          minzoom: 13,
+          minzoom: 11,
           paint: {
             'fill-extrusion-color': [
-              'case',
-              ['has', 'render_height'],
-              [
-                'interpolate', ['linear'], ['coalesce', ['get', 'render_height'], 10],
-                5, '#c8d6e5',
-                20, '#a4b0be',
-                50, '#8395a7',
-                100, '#576574',
-              ],
-              '#d1d8e0',
+              'interpolate', ['linear'],
+              ['coalesce', ['get', 'render_height'], ['get', 'height'], 8],
+              0, '#b8c9d4',
+              8, '#9ab0c0',
+              20, '#7d97ab',
+              50, '#607d90',
+              100, '#4a6578',
+              200, '#344e60',
             ],
             'fill-extrusion-height': [
-              'coalesce',
-              ['get', 'render_height'],
-              ['get', 'height'],
-              10,
+              'interpolate', ['linear'], ['zoom'],
+              11, [
+                'coalesce',
+                ['get', 'render_height'],
+                ['get', 'height'],
+                ['*', 4, ['coalesce', ['get', 'render_min_height'], 1]],
+              ],
+              16, [
+                'coalesce',
+                ['get', 'render_height'],
+                ['get', 'height'],
+                12,
+              ],
             ],
             'fill-extrusion-base': [
-              'coalesce',
-              ['get', 'render_min_height'],
-              ['get', 'min_height'],
-              0,
+              'coalesce', ['get', 'render_min_height'], ['get', 'min_height'], 0,
             ],
-            'fill-extrusion-opacity': 0.7,
+            'fill-extrusion-opacity': [
+              'interpolate', ['linear'], ['zoom'],
+              11, 0.4,
+              14, 0.7,
+            ],
           },
         });
 
@@ -375,16 +383,41 @@ function InlineMapLibre({ onDamClick, selectedDam }: { onDamClick: (d: DamPoint)
           },
         });
 
-        // ── Forest / landcover ──────────────────────────────────────
+        // ── Forest / landcover (visible green overlay on satellite) ─
         map.addLayer({
           id: 'landcover-forest',
           source: 'openmaptiles',
           'source-layer': 'landcover',
           type: 'fill',
-          filter: ['==', 'class', 'forest'],
+          filter: ['in', 'class', 'forest', 'wood', 'grass', 'scrub'],
           paint: {
-            'fill-color': '#27ae60',
-            'fill-opacity': 0.15,
+            'fill-color': [
+              'match', ['get', 'class'],
+              'forest', '#1b7a3d',
+              'wood', '#229954',
+              'grass', '#2ecc71',
+              'scrub', '#52be80',
+              '#27ae60',
+            ],
+            'fill-opacity': [
+              'interpolate', ['linear'], ['zoom'],
+              5, 0.12,
+              10, 0.25,
+              14, 0.4,
+            ],
+          },
+        }, 'satellite');
+
+        // ── Parks / protected areas ─────────────────────────────────
+        map.addLayer({
+          id: 'landuse-park',
+          source: 'openmaptiles',
+          'source-layer': 'landuse',
+          type: 'fill',
+          filter: ['in', 'class', 'park', 'nature_reserve', 'protected_area'],
+          paint: {
+            'fill-color': '#2ecc71',
+            'fill-opacity': 0.3,
           },
         }, 'satellite');
 
