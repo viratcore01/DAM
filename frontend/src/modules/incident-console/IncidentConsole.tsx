@@ -144,7 +144,7 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
         container: mapContainer.current!,
         style,
         center: [78.9, 20.6],
-        zoom: 1,
+        zoom: 2,
         pitch: 45,
         bearing: -17,
         maxPitch: 75,
@@ -159,7 +159,10 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
       map.addControl(new mgl.AttributionControl({ compact: true }), 'bottom-right');
 
       map.on('load', () => {
-        // ── 3D Terrain ──────────────────────────────────────────
+        // ── 3D Globe ──────────────────────────────────────────
+        map.setProjection({ type: 'globe' });
+
+        // ── 3D Terrain (works partially on globe) ───────────────
         map.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
 
         // ── Hillshade layer ──────────────────────────────────────
@@ -275,26 +278,6 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
           },
         });
 
-        // ── 3D BUILDING EXTRUSIONS (MapTiler) ───────────────────
-        map.addSource('maptiler-buildings', {
-          type: 'vector',
-          url: 'https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ',
-        });
-        map.addLayer({
-          id: '3d-buildings',
-          type: 'fill-extrusion',
-          source: 'maptiler-buildings',
-          'source-layer': 'building',
-          minzoom: 12,
-          paint: {
-            'fill-extrusion-color': '#e0e7ff',
-            'fill-extrusion-height': ['case', ['has', 'render_height'], ['get', 'render_height'], ['has', 'height'], ['get', 'height'], 15],
-            'fill-extrusion-base': ['case', ['has', 'render_min_height'], ['get', 'render_min_height'], ['has', 'min_height'], ['get', 'min_height'], 0],
-            'fill-extrusion-opacity': 0.75,
-            'fill-extrusion-vertical-gradient': true,
-          },
-        });
-
         // ── Click handler ────────────────────────────────────────
         map.on('click', 'dams-dots', (e: any) => {
           if (!e.features?.length) return;
@@ -311,34 +294,65 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
     return () => { mapRef.current?.remove(); mapRef.current = null; };
   }, []);
 
-  // Fly to selected dam
+  // Fly to selected dam (switch to Mercator for close-up, back to Globe on deselect)
   useEffect(() => {
-    if (!mapRef.current || !selectedDam) return;
-    mapRef.current.flyTo({
-      center: [selectedDam.lon, selectedDam.lat],
-      zoom: 13.5,
-      pitch: 65,
-      bearing: 30,
-      duration: 3000,
-      essential: true,
-    });
+    if (!mapRef.current) return;
+    if (!selectedDam) {
+      // Deselect — switch back to Globe
+      try {
+        mapRef.current.setProjection({ type: 'globe' });
+        mapRef.current.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
+        if (mapRef.current.getLayer('hillshade-layer')) {
+          mapRef.current.setLayoutProperty('hillshade-layer', 'visibility', 'visible');
+        }
+        // Remove buildings if present
+        if (mapRef.current.getLayer('3d-buildings')) {
+          mapRef.current.removeLayer('3d-buildings');
+        }
+        if (mapRef.current.getSource('maptiler-buildings')) {
+          mapRef.current.removeSource('maptiler-buildings');
+        }
+        mapRef.current.flyTo({ center: [78.9, 20.6], zoom: 2, pitch: 45, bearing: -17, duration: 2000 });
+      } catch (e) { console.warn('Deselect flyback failed:', e); }
+      return;
+    }
+    // Switch to Mercator for the fly-to zoom
+    try {
+      mapRef.current.setProjection({ type: 'mercator' });
+    } catch {}
+    setTimeout(() => {
+      mapRef.current?.flyTo({
+        center: [selectedDam.lon, selectedDam.lat],
+        zoom: 13.5,
+        pitch: 65,
+        bearing: 30,
+        duration: 3000,
+        essential: true,
+      });
+    }, 300);
   }, [selectedDam]);
 
   // ── Toggle labels ─────────────────────────────────────────────────
-  useEffect(() => {
-    if (!mapRef.current?.isStyleLoaded()) return;
-    try {
-      mapRef.current.setLayoutProperty('labels-layer', 'visibility', showLabels ? 'visible' : 'none');
-    } catch {}
-  }, [showLabels]);
-
   // ── Toggle buildings vs terrain ───────────────────────────────────
   useEffect(() => {
     if (!mapRef.current?.isStyleLoaded()) return;
     try {
       if (showBuildings) {
-        // Disable terrain → enable buildings
+        // Switch to Mercator for buildings (fill-extrusion needs Mercator)
+        mapRef.current.setProjection({ type: 'mercator' });
         mapRef.current.setTerrain(null);
+        // Hide hillshade
+        if (mapRef.current.getLayer('hillshade-layer')) {
+          mapRef.current.setLayoutProperty('hillshade-layer', 'visibility', 'none');
+        }
+        // Add buildings layer if not present
+        // Add MapTiler source if not present
+        if (!mapRef.current.getSource('maptiler-buildings')) {
+          mapRef.current.addSource('maptiler-buildings', {
+            type: 'vector',
+            url: 'https://api.maptiler.com/tiles/v3/tiles.json?key=ApGvqBRr1WbzGPnokdoZ',
+          });
+        }
         if (!mapRef.current.getLayer('3d-buildings')) {
           mapRef.current.addLayer({
             id: '3d-buildings',
@@ -355,15 +369,18 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
             },
           });
         }
-        if (mapRef.current.getLayer('hillshade-layer')) {
-          mapRef.current.setLayoutProperty('hillshade-layer', 'visibility', 'none');
-        }
       } else {
-        // Enable terrain → remove buildings
+        // Remove buildings
         if (mapRef.current.getLayer('3d-buildings')) {
           mapRef.current.removeLayer('3d-buildings');
         }
+        if (mapRef.current.getSource('maptiler-buildings')) {
+          mapRef.current.removeSource('maptiler-buildings');
+        }
+        // Switch back to globe
+        mapRef.current.setProjection({ type: 'globe' });
         mapRef.current.setTerrain({ source: 'terrain-dem', exaggeration: 1.0 });
+        // Show hillshade
         if (mapRef.current.getLayer('hillshade-layer')) {
           mapRef.current.setLayoutProperty('hillshade-layer', 'visibility', 'visible');
         }
@@ -371,6 +388,15 @@ function InlineMapLibre({ onDamClick, selectedDam, onMapReady }: { onDamClick: (
     } catch (e) { console.warn('Toggle failed:', e); }
   }, [showBuildings]);
 
+  // ── Toggle labels layer visibility ──────────────────────────────
+  useEffect(() => {
+    if (!mapRef.current?.isStyleLoaded()) return;
+    try {
+      if (mapRef.current.getLayer('labels-layer')) {
+        mapRef.current.setLayoutProperty('labels-layer', 'visibility', showLabels ? 'visible' : 'none');
+      }
+    } catch (e) { console.warn('Labels toggle failed:', e); }
+  }, [showLabels]);
 
 
   // ── Update flood overlay ──────────────────────────────────────────
